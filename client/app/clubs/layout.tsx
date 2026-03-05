@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import { SITE_URL } from "@/lib/siteConfig";
 
 export const metadata: Metadata = {
   title: "Clubs & Centres",
@@ -8,10 +9,10 @@ export const metadata: Metadata = {
     title: "Clubs & Centres | SOCIO",
     description:
       "Explore clubs, research centres, and student organisations at Christ University.",
-    url: "https://socio.christuniversity.in/clubs",
+    url: `${SITE_URL}/clubs`,
   },
   alternates: {
-    canonical: "https://socio.christuniversity.in/clubs",
+    canonical: `${SITE_URL}/clubs`,
   },
 };
 

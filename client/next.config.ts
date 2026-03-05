@@ -85,17 +85,6 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  // Redirect Vercel domain to primary
-  async redirects() {
-    return [
-      {
-        source: "/:path*",
-        has: [{ type: "host", value: "sociov2.vercel.app" }],
-        destination: "https://socio.christuniversity.in/:path*",
-        permanent: true,
-      },
-    ];
-  },
 };
 
 export default nextConfig;

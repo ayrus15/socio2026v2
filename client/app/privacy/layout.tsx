@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import { SITE_URL } from "@/lib/siteConfig";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -8,10 +9,10 @@ export const metadata: Metadata = {
     title: "Privacy Policy | SOCIO",
     description:
       "Learn how SOCIO collects, uses, and protects your personal data.",
-    url: "https://socio.christuniversity.in/privacy",
+    url: `${SITE_URL}/privacy`,
   },
   alternates: {
-    canonical: "https://socio.christuniversity.in/privacy",
+    canonical: `${SITE_URL}/privacy`,
   },
 };
 

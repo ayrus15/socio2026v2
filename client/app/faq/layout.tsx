@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import { SITE_URL } from "@/lib/siteConfig";
 import { FAQPageJsonLd } from "@/app/_components/JsonLd";
 
 const faqItems = [
@@ -32,10 +33,10 @@ export const metadata: Metadata = {
     title: "FAQ | SOCIO",
     description:
       "Find answers to common questions about SOCIO — event registration, accounts, and more.",
-    url: "https://socio.christuniversity.in/faq",
+    url: `${SITE_URL}/faq`,
   },
   alternates: {
-    canonical: "https://socio.christuniversity.in/faq",
+    canonical: `${SITE_URL}/faq`,
   },
 };
 

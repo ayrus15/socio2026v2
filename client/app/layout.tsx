@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SITE_URL } from "@/lib/siteConfig";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 import NavigationBar from "./_components/NavigationBar";
@@ -22,7 +23,7 @@ import {
 export const revalidate = 300; // Revalidate every 5 minutes
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://socio.christuniversity.in"),
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "SOCIO – Campus Event Management Platform | Christ University",
     template: "%s | SOCIO",
@@ -62,7 +63,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_IN",
-    url: "https://socio.christuniversity.in",
+    url: SITE_URL,
     siteName: "SOCIO",
     title: "SOCIO – Campus Event Management Platform | Christ University",
     description:
@@ -84,7 +85,7 @@ export const metadata: Metadata = {
     images: ["/images/withsocio.png"],
   },
   alternates: {
-    canonical: "https://socio.christuniversity.in",
+    canonical: SITE_URL,
   },
   icons: {
     icon: "/favicon.svg",

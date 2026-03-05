@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import { SITE_URL } from "@/lib/siteConfig";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -8,10 +9,10 @@ export const metadata: Metadata = {
     title: "Terms of Service | SOCIO",
     description:
       "Terms governing access and use of the SOCIO campus event management platform.",
-    url: "https://socio.christuniversity.in/terms",
+    url: `${SITE_URL}/terms`,
   },
   alternates: {
-    canonical: "https://socio.christuniversity.in/terms",
+    canonical: `${SITE_URL}/terms`,
   },
 };
 

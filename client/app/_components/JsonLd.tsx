@@ -1,17 +1,19 @@
+import { SITE_URL } from "@/lib/siteConfig";
+
 export function OrganizationJsonLd() {
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Organization",
     name: "SOCIO",
-    url: "https://socio.christuniversity.in",
-    logo: "https://socio.christuniversity.in/favicon.svg",
+    url: SITE_URL,
+    logo: `${SITE_URL}/favicon.svg`,
     description:
       "SOCIO is the all-in-one campus event management platform for Christ University — discover events, register, and manage fests, clubs, and workshops.",
     sameAs: [],
     contactPoint: {
       "@type": "ContactPoint",
       contactType: "customer support",
-      url: "https://socio.christuniversity.in/contact",
+      url: `${SITE_URL}/contact`,
     },
   };
 
@@ -28,7 +30,7 @@ export function WebsiteJsonLd() {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: "SOCIO",
-    url: "https://socio.christuniversity.in",
+    url: SITE_URL,
     description:
       "Discover, register, and manage campus events at Christ University.",
     potentialAction: {
@@ -36,7 +38,7 @@ export function WebsiteJsonLd() {
       target: {
         "@type": "EntryPoint",
         urlTemplate:
-          "https://socio.christuniversity.in/events?search={search_term_string}",
+          `${SITE_URL}/events?search={search_term_string}`,
       },
       "query-input": "required name=search_term_string",
     },

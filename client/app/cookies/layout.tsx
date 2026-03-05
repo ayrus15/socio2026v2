@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import { SITE_URL } from "@/lib/siteConfig";
 
 export const metadata: Metadata = {
   title: "Cookie Policy",
@@ -8,10 +9,10 @@ export const metadata: Metadata = {
     title: "Cookie Policy | SOCIO",
     description:
       "Understand what cookies SOCIO uses and how to manage them.",
-    url: "https://socio.christuniversity.in/cookies",
+    url: `${SITE_URL}/cookies`,
   },
   alternates: {
-    canonical: "https://socio.christuniversity.in/cookies",
+    canonical: `${SITE_URL}/cookies`,
   },
 };
 

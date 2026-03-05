@@ -1,7 +1,8 @@
 import { MetadataRoute } from "next";
+import { SITE_URL } from "@/lib/siteConfig";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = "https://socio.christuniversity.in";
+  const baseUrl = SITE_URL;
 
   // Static pages with their priorities and change frequencies
   const staticPages: MetadataRoute.Sitemap = [
