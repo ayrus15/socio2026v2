@@ -31,16 +31,42 @@ const app = express();
 app.use(express.json());
 
 // CORS - restrict to allowed origins in production
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://socio.christuniversity.in,http://localhost:3000').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://socio.christuniversity.in,http://localhost:3000,http://127.0.0.1:3000')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
-app.use((req, res, next) => {
+const ALLOWED_ORIGIN_PATTERNS = (process.env.ALLOWED_ORIGIN_PATTERNS || '^https://.*\\.vercel\\.app$,^https://.*\\.christuniversity\\.in$')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean)
+  .map(pattern => new RegExp(pattern));
+
+const isOriginAllowed = (origin) => {
+  if (!origin) return true;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  return ALLOWED_ORIGIN_PATTERNS.some((regex) => regex.test(origin));
+};
+
+const setCorsHeaders = (req, res) => {
   const origin = req.headers.origin;
-  if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin || '*');
+  if (origin && isOriginAllowed(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Vary', 'Origin');
+  } else if (!origin) {
+    res.header('Access-Control-Allow-Origin', '*');
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-User-Email');
-  res.header('Access-Control-Allow-Credentials', 'true');
+};
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (!isOriginAllowed(origin)) {
+    return res.status(403).json({ error: 'CORS origin not allowed' });
+  }
+  setCorsHeaders(req, res);
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -87,9 +113,7 @@ app.use("/api", reportRoutes);
 // Global error handler - ensures CORS headers are always sent
 app.use((err, req, res, next) => {
   console.error('Global error:', err);
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', '*');
+  setCorsHeaders(req, res);
   res.status(500).json({ error: 'Internal server error', message: err.message });
 });
 
