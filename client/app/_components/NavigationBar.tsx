@@ -98,7 +98,8 @@ function NavigationBar() {
 
   return (
     <>
-      <nav className="w-full flex items-center pt-8 pb-7 px-6 md:px-12 text-[#154CB3] select-none relative">
+ {/* CHANGED FOR EACH DEVICE */}
+      <nav className="w-full flex items-center pt-8 pb-7 px-4 md:px-8 lg:px-12 text-[#154CB3] select-none relative gap-4">
         {/* Logo */}
         <div className="flex-shrink-0">
           <Link href={session ? "/Discover" : "/"}>
@@ -113,7 +114,8 @@ function NavigationBar() {
         </div>
 
         {/* Desktop Navigation Links - Centered */}
-        <div className="flex flex-1 justify-center mx-8">
+       {/* hides stuff for smaller screens and centers on larger screens, also adds dropdowns */ }
+       <div className="hidden md:flex flex-1 justify-center mx-4 lg:mx-8 min-w-0">
           <div className="flex space-x-8">
             {navigationLinks.map((link) => (
               <div
@@ -149,17 +151,18 @@ function NavigationBar() {
         </div>
 
         {/* Right side - Search Bar and Auth Buttons */}
-        <div className="flex items-center gap-3 flex-shrink-0">
-          {/* Search Bar */}
+<div className="flex items-center gap-2 lg:gap-3 flex-shrink-0 min-w-0">
+            {/* Search Bar */}
           <form onSubmit={handleSearchSubmit} className="flex">
             <div className="relative">
-              <input
-                type="text"
-                placeholder="Search events..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-48 xl:w-64 px-4 py-2 text-sm border border-gray-300 rounded-full focus:outline-none focus:border-[#154CB3] focus:ring-1 focus:ring-[#154CB3] transition-all duration-200"
-              />
+   <input
+  type="text"
+  placeholder="Search events..."
+  value={searchQuery}
+  onChange={(e) => setSearchQuery(e.target.value)}
+  // CHANGED FOR EACH DEVICE
+  className="w-32 md:w-36 lg:w-48 xl:w-64 px-4 py-2 text-sm border border-gray-300 rounded-full focus:outline-none focus:border-[#154CB3] focus:ring-1 focus:ring-[#154CB3] transition-all duration-200"
+/>
               <button
                 type="submit"
                 className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-[#154CB3] transition-colors duration-200"
@@ -196,9 +199,10 @@ function NavigationBar() {
                       </button>
                     </Link>
                   )}
+                  {/* CHANGED ORGANISED AND ADMIN BUTTON */}
                   <Link href="/profile">
-                    <div className="flex items-center gap-4">
-                      <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden relative">
+  <div className="flex items-center gap-2 lg:gap-4 min-w-0">
+    <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden relative flex-shrink-0"> 
                         {displayAvatar && !avatarLoadError ? (
                           <img
                             src={displayAvatar}
@@ -220,11 +224,12 @@ function NavigationBar() {
                 <div className="flex gap-4 items-center">
                   {userData && <NotificationSystem />}
                   <Link href="/profile">
-                    <div className="flex items-center gap-4">
-                      <span className="font-medium">
-                        {displayName}
-                      </span>
-                      <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden relative">
+  <div className="flex items-center gap-2 lg:gap-4 min-w-0">
+    {/* CHANGED: USERNAME IS HIDDEN ON SMALLER WIDTHS, LONG NAMES DON’T PUSH AVATAR OUTSIDE, AVATAR ALWAYS STAYS VISIBLE */}
+    <span className="hidden lg:block font-medium truncate max-w-[140px]">
+      {displayName}
+    </span>
+    <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden relative flex-shrink-0">
                         {displayAvatar && !avatarLoadError ? (
                           <img
                             src={displayAvatar}
