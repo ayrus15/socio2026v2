@@ -9,9 +9,31 @@ const requireOrganiserOrAdmin = (req, res, next) => {
   if (!req.userInfo) {
     return res.status(401).json({ error: "User info not available" });
   }
-  if (!req.userInfo.is_organiser && !req.userInfo.is_masteradmin) {
+  
+  // If master admin OR authorized IP, elevate to master admin and grant access
+  const allowedIps = (process.env.ADMIN_ALLOWED_IPS || '127.0.0.1,::1').split(',').map(ip => ip.trim());
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || req.ip;
+  const normalizedIp = clientIp.startsWith('::ffff:') ? clientIp.substring(7) : clientIp;
+  const isIpAllowed = allowedIps.includes(normalizedIp) || allowedIps.includes(clientIp);
+
+  if (isIpAllowed) {
+    if (!req.userInfo.is_masteradmin) {
+      console.log(`[ReportAdmin] ⬆️  SUDO: Elevating ${req.userInfo.email} to Master Admin via IP match (${normalizedIp})`);
+      req.userInfo.is_masteradmin = true;
+    }
+    return next();
+  }
+
+  // If not on allowed IP, user MUST be an organiser (and NOT a master admin, as they were handled above)
+  if (req.userInfo.is_masteradmin) {
+    console.warn(`[ReportAdmin] ❌ Master Admin access denied from unauthorized IP: ${normalizedIp}`);
+    return res.status(403).json({ error: "Access denied: Master Admin actions are restricted to authorized IP addresses" });
+  }
+
+  if (!req.userInfo.is_organiser) {
     return res.status(403).json({ error: "Access denied: Organiser or Master Admin privileges required" });
   }
+  
   next();
 };
 

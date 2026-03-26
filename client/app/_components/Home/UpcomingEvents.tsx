@@ -123,7 +123,7 @@ const UpcomingEvents = () => {
           };
 
           return (
-            <div className="event-card-wrapper" key={event.id}>
+            <div className="event-card-wrapper" key={event.event_id}>
               <EventCard {...eventCardData} />
             </div>
           );

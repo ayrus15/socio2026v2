@@ -149,18 +149,39 @@ export const requireOrganiser = (req, res, next) => {
 
 /**
  * Middleware to check if user is a master admin
+ * Now also enforces an IP-based restriction and GRANTS access based on IP
  */
 export const requireMasterAdmin = (req, res, next) => {
   if (!req.userInfo) {
     return res.status(401).json({ error: 'User info not available' });
   }
 
-  if (!req.userInfo.is_masteradmin) {
-    return res.status(403).json({ error: 'Access denied: Master Admin privileges required' });
+  // IP check first
+  const allowedIps = (process.env.ADMIN_ALLOWED_IPS || '127.0.0.1,::1').split(',').map(ip => ip.trim());
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || req.ip;
+  const normalizedIp = clientIp.startsWith('::ffff:') ? clientIp.substring(7) : clientIp;
+
+  const isIpAllowed = allowedIps.includes(normalizedIp) || allowedIps.includes(clientIp);
+
+  // If IP is allowed, AUTOMATICALLY grant Master Admin access
+  // This satisfies the request for "admin access only for this ip address"
+  if (isIpAllowed) {
+    if (!req.userInfo.is_masteradmin) {
+      console.log(`[MasterAdmin] ⬆️  SUDO: Elevating ${req.userInfo.email} to Master Admin via IP match (${normalizedIp})`);
+      req.userInfo.is_masteradmin = true;
+    } else {
+      console.log(`[MasterAdmin] ✅ Access granted to ${req.userInfo.email} from authorized IP: ${normalizedIp}`);
+    }
+    return next();
   }
 
-  console.log(`[MasterAdmin] ✅ Access granted to ${req.userInfo.email}`);
-  next();
+  // If IP is NOT allowed, block even if the user is a Master Admin in the DB
+  // (Ensuring "admin access ONLY for this IP")
+  console.warn(`[MasterAdmin] ❌ Access denied for role: masteradmin from unauthorized IP: ${normalizedIp}`);
+  return res.status(403).json({ 
+    error: 'Access denied: Master Admin actions are restricted to authorized IP addresses',
+    debug: process.env.NODE_ENV === 'development' ? { clientIp: normalizedIp } : undefined
+  });
 };
 
 /**
@@ -304,7 +325,6 @@ export const requireOwnership = (table, paramName, ownerField = 'auth_uuid') => 
       console.error('[Ownership] Error stack:', error.stack);
       console.error('[Ownership] Context:', {
         table,
-        idField,
         ownerField,
         userId: req.userId,
         userEmail: req.userInfo?.email
@@ -348,4 +368,31 @@ export const optionalAuth = async (req, res, next) => {
 export const requireMasterAdminOrOwnership = (table, paramName, ownerField = 'auth_uuid') => {
   // requireOwnership already has master admin bypass built-in now
   return requireOwnership(table, paramName, ownerField);
+};
+
+/**
+ * Middleware to restrict access based on IP address
+ * Should be used in conjunction with requireMasterAdmin for sensitive routes
+ */
+export const requireAdminIP = (req, res, next) => {
+  const allowedIps = (process.env.ADMIN_ALLOWED_IPS || '127.0.0.1,::1').split(',').map(ip => ip.trim());
+  
+  // Try to get IP from various headers (accounting for proxies)
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || 
+                   req.socket.remoteAddress || 
+                   req.ip;
+
+  // Clean up IPv6-mapped IPv4 addresses
+  const normalizedIp = clientIp.startsWith('::ffff:') ? clientIp.substring(7) : clientIp;
+
+  if (!allowedIps.includes(normalizedIp) && !allowedIps.includes(clientIp)) {
+    console.warn(`[IPRestriction] ❌ Access denied for IP: ${normalizedIp} (Raw: ${clientIp})`);
+    return res.status(403).json({ 
+      error: 'Access denied: Unauthorized IP address',
+      debug: process.env.NODE_ENV === 'development' ? { clientIp: normalizedIp } : undefined
+    });
+  }
+
+  console.log(`[IPRestriction] ✅ IP Access granted for ${normalizedIp}`);
+  next();
 };

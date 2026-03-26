@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 "use client";
 import React, { useState } from "react";
 import EventForm from "@/app/_components/Admin/ManageEvent";

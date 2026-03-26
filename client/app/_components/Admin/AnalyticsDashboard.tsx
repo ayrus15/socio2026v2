@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useEffect } from "react";
 import {
   BarChart,
   Bar,
@@ -39,6 +39,7 @@ interface AnalyticsDashboardProps {
     is_support: boolean;
     is_masteradmin: boolean;
     created_at: string;
+    campus?: string | null;
   }>;
   events: Array<{
     event_id: string;
@@ -282,15 +283,64 @@ export default function AnalyticsDashboard({
   fests,
   registrations,
 }: AnalyticsDashboardProps) {
+
+  // ── Name Normalizer ───────────────────────────────────────────────────────
+  const normalizeName = useCallback((name: string | null | undefined) => {
+    if (!name) return "Unknown";
+    let formatted = name.trim();
+    // Capitalize each word
+    formatted = formatted.split(' ').map(word => 
+      word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+    ).join(' ');
+    // Handle specific acronyms
+    formatted = formatted.replace(/\bBca\b/g, "BCA")
+                         .replace(/\bMca\b/g, "MCA")
+                         .replace(/\bMba\b/g, "MBA")
+                         .replace(/\bBtech\b/g, "B.Tech")
+                         .replace(/\bMtech\b/g, "M.Tech");
+    return formatted;
+  }, []);
+
   // ── Filters ─────────────────────────────────────────────────────────────────
   const [dateRange, setDateRange] = useState<DateRange>("all");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [campusFilter, setCampusFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [chartTopN, setChartTopN] = useState(10);
 
-  const cutoff = useMemo(() => getDateCutoff(dateRange), [dateRange]);
+  const cutoff = useMemo(() => {
+    if (dateRange === "all" && !startDate) return null;
+    if (startDate) return new Date(startDate);
+    return getDateCutoff(dateRange);
+  }, [dateRange, startDate]);
+
+  const endCutoff = useMemo(() => {
+    if (!endDate) return null;
+    return new Date(endDate);
+  }, [endDate]);
+
+  const campuses = useMemo(() => {
+    const set = new Set<string>();
+    users.forEach(u => u.campus && set.add(u.campus));
+    return Array.from(set).sort();
+  }, [users]);
 
   // Previous-period cutoff for growth calculation
   const prevCutoff = useMemo(() => {
+    if (startDate && endDate) {
+      // Calculate duration of the custom range
+      const s = new Date(startDate);
+      const e = new Date(endDate);
+      if (!isNaN(s.getTime()) && !isNaN(e.getTime())) {
+        const diff = e.getTime() - s.getTime();
+        return {
+          start: new Date(s.getTime() - diff),
+          end: s,
+        };
+      }
+    }
+    
     if (dateRange === "all") return null;
     const map: Record<string, number> = { "7d": 7, "30d": 30, "90d": 90, "1y": 365 };
     const days = map[dateRange] || 30;
@@ -299,21 +349,32 @@ export default function AnalyticsDashboard({
       start: new Date(now.getTime() - 2 * days * 86400000),
       end: new Date(now.getTime() - days * 86400000),
     };
-  }, [dateRange]);
+  }, [dateRange, startDate, endDate]);
 
   // ── Filtered Data ───────────────────────────────────────────────────────────
   const filteredEvents = useMemo(() => {
-    let filtered = events.filter(e => isAfterCutoff(e.created_at, cutoff));
+    let filtered = events.filter(e => {
+      const startOk = isAfterCutoff(e.created_at, cutoff);
+      const endOk = endCutoff ? new Date(e.created_at) <= endCutoff : true;
+      return startOk && endOk;
+    });
+
+    if (campusFilter !== "all") {
+      // Find events created by users in that campus
+      const campusUsers = new Set(users.filter(u => u.campus === campusFilter).map(u => u.email));
+      filtered = filtered.filter(e => campusUsers.has(e.created_by));
+    }
+
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(
         e => e.title.toLowerCase().includes(q) ||
-             e.organizing_dept?.toLowerCase().includes(q) ||
+             normalizeName(e.organizing_dept).toLowerCase().includes(q) ||
              e.created_by?.toLowerCase().includes(q)
       );
     }
     return filtered;
-  }, [events, cutoff, searchQuery]);
+  }, [events, cutoff, endCutoff, searchQuery, campusFilter, users, normalizeName]);
 
   const filteredRegistrations = useMemo(() => {
     const eventIds = new Set(filteredEvents.map(e => e.event_id));
@@ -401,14 +462,14 @@ export default function AnalyticsDashboard({
   const deptDataFull = useMemo(() => {
     const map: Record<string, { events: number; registrations: number }> = {};
     filteredEvents.forEach(e => {
-      const dept = e.organizing_dept || "Unknown";
+      const dept = normalizeName(e.organizing_dept) || "Unknown";
       if (!map[dept]) map[dept] = { events: 0, registrations: 0 };
       map[dept].events += 1;
       map[dept].registrations += e.registration_count || 0;
     });
     return Object.entries(map)
       .map(([name, d]) => ({
-        name: name.length > 18 ? name.substring(0, 18) + "…" : name,
+        name: name.length > 20 ? name.substring(0, 20) + "…" : name,
         fullName: name,
         Events: d.events,
         Registrations: d.registrations,
@@ -533,7 +594,7 @@ export default function AnalyticsDashboard({
     });
     return Object.entries(map)
       .map(([email, count]) => ({
-        name: email.length > 25 ? email.substring(0, 25) + "…" : email,
+        shortEmail: email.split('@')[0],
         fullEmail: email,
         Events: count,
       }))
@@ -599,62 +660,112 @@ export default function AnalyticsDashboard({
     <div className="space-y-6">
       {/* ── Toolbar: Filters, Search, Export ──────────────────────────────── */}
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
-        <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+        <div className="flex flex-wrap gap-4 items-end">
           {/* Date Range Selector */}
-          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 flex-shrink-0">
-            {([
-              ["7d", "7D"],
-              ["30d", "30D"],
-              ["90d", "90D"],
-              ["1y", "1Y"],
-              ["all", "All"],
-            ] as [DateRange, string][]).map(([val, lbl]) => (
-              <button
-                key={val}
-                onClick={() => setDateRange(val)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                  dateRange === val
-                    ? "bg-[#154CB3] text-white shadow-sm"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-200"
-                }`}
-              >
-                {lbl}
-              </button>
-            ))}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider ml-1">Period</label>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 flex-shrink-0">
+              {([
+                ["7d", "7D"],
+                ["30d", "30D"],
+                ["90d", "90D"],
+                ["1y", "1Y"],
+                ["all", "All"],
+              ] as [DateRange, string][]).map(([val, lbl]) => (
+                <button
+                  key={val}
+                  onClick={() => { setDateRange(val); setStartDate(""); setEndDate(""); }}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    dateRange === val && !startDate
+                      ? "bg-[#154CB3] text-white shadow-sm"
+                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-200"
+                  }`}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {/* Custom Date Inputs */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider ml-1">Custom Range</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => { setStartDate(e.target.value); setDateRange("all"); }}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+              />
+              <span className="text-gray-400 text-xs">to</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+              />
+            </div>
+          </div>
+
+          {/* Campus Filter */}
+          {campuses.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider ml-1">Campus</label>
+              <select
+                value={campusFilter}
+                onChange={e => setCampusFilter(e.target.value)}
+                className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#154CB3] bg-white"
+              >
+                <option value="all">All Campuses</option>
+                {campuses.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Search */}
-          <div className="relative flex-1 min-w-0">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search events, departments, organisers..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#154CB3] focus:border-[#154CB3] transition-all"
-            />
-            {searchQuery && (
-              <button onClick={() => setSearchQuery("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
+          <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider ml-1">Search Analytics</label>
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search events, depts, organisers..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#154CB3] focus:border-[#154CB3] transition-all"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
+        </div>
 
-          {/* Top-N Selector */}
-          <select
-            value={chartTopN}
-            onChange={e => setChartTopN(Number(e.target.value))}
-            className="px-3 py-2 text-xs border border-gray-200 rounded-lg text-gray-600 focus:ring-2 focus:ring-[#154CB3] flex-shrink-0"
-          >
-            <option value={5}>Top 5</option>
-            <option value={10}>Top 10</option>
-            <option value={20}>Top 20</option>
-            <option value={50}>Top 50</option>
-          </select>
+        <div className="mt-4 flex items-center justify-between pt-4 border-t border-gray-100">
+          <div className="flex items-center gap-3">
+            {/* Top-N Selector */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Show</span>
+              <select
+                value={chartTopN}
+                onChange={e => setChartTopN(Number(e.target.value))}
+                className="px-2 py-1 text-xs border border-gray-200 rounded-lg text-gray-600 focus:ring-2 focus:ring-[#154CB3]"
+              >
+                <option value={5}>Top 5</option>
+                <option value={10}>Top 10</option>
+                <option value={20}>Top 20</option>
+              </select>
+              <span className="text-xs text-gray-500">items</span>
+            </div>
+          </div>
 
           {/* Export Dropdown */}
           <div className="relative group flex-shrink-0">
@@ -850,7 +961,7 @@ export default function AnalyticsDashboard({
         <ChartCard title="User Roles" subtitle="Role distribution">
           {userRoles.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
+              <PieChart margin={{ top: 10, right: 40, bottom: 10, left: 40 }}>
                 <Pie data={userRoles} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={4} dataKey="value"
                   label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                   labelLine={{ stroke: "#94a3b8", strokeWidth: 1 }}>
@@ -920,7 +1031,7 @@ export default function AnalyticsDashboard({
                 <BarChart data={topOrganisers} layout="vertical" margin={{ left: 10, right: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis type="number" tick={{ fontSize: 11, fill: "#6b7280" }} />
-                  <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 11, fill: "#6b7280" }} />
+                  <YAxis dataKey="shortEmail" type="category" width={130} tick={{ fontSize: 11, fill: "#6b7280" }} />
                   <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="Events" radius={[0, 4, 4, 0]} barSize={16}>
                     {topOrganisers.map((_, i) => (<Cell key={i} fill={COLORS[i % COLORS.length]} />))}

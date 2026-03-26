@@ -4,6 +4,8 @@ import React from "react";
 import Link from "next/link";
 import Image from "next/image";
 import Footer from "../../_components/Home/Footer";
+import sachinImg from '@/public/founder-sachin-yadav.jpg';
+import suryaImg from '@/public/founder-surya-vamshi.jpg';
 
 export default function TeamPage() {
   const founders = [
@@ -16,7 +18,7 @@ export default function TeamPage() {
       linkedin: "https://www.linkedin.com/in/thesachinyyadav/",
       github: "https://github.com/thesachinyyadav",
       quote: "The best products come from understanding real problems firsthand.",
-      image: "/founder-sachin-yadav.jpg",
+      image: sachinImg,
     },
     {
       name: "Surya Vamshi",
@@ -27,7 +29,7 @@ export default function TeamPage() {
       linkedin: "https://www.linkedin.com/in/suryaavamshi/",
       github: "https://github.com/thesachinyyadav",
       quote: "Great products solve real problems. We just happened to find ours on campus.",
-      image: "/founder-surya-vamshi.jpg",
+      image: suryaImg,
     },
   ];
 
@@ -174,8 +176,7 @@ export default function TeamPage() {
                     <Image
                       src={founder.image}
                       alt={founder.name}
-                      width={128}
-                      height={128}
+                      placeholder="blur"
                       className="w-32 h-32 rounded-full object-cover border-4 border-white shadow-lg relative z-10"
                     />
                   ) : (

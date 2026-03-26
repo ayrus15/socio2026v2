@@ -1618,6 +1618,7 @@ export default function EventForm({
                     label="Contact email:"
                     name="contactEmail"
                     type="email"
+                    autoComplete="new-password"
                     register={register}
                     error={errors.contactEmail}
                     required
@@ -1627,6 +1628,7 @@ export default function EventForm({
                     label="Contact phone:"
                     name="contactPhone"
                     type="tel"
+                    autoComplete="new-password"
                     register={register}
                     error={errors.contactPhone}
                     required
