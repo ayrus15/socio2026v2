@@ -351,7 +351,12 @@ export default function MasterAdminPage() {
 
   const fetchRegistrations = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/registrations`);
+      const token = await getFreshToken();
+      const response = await fetch(`${API_URL}/api/registrations`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
       if (!response.ok) throw new Error("Failed to fetch registrations");
       const data = await response.json();
       setRegistrations(data.registrations || []);
@@ -407,10 +412,19 @@ export default function MasterAdminPage() {
   const fetchEvents = async () => {
     try {
       setIsLoading(true);
+      const token = await getFreshToken();
       
       const [eventsResponse, registrationsResponse] = await Promise.all([
-        fetch(`${API_URL}/api/events`),
-        fetch(`${API_URL}/api/registrations`)
+        fetch(`${API_URL}/api/events`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+        fetch(`${API_URL}/api/registrations`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        })
       ]);
 
       if (!eventsResponse.ok) {
@@ -451,11 +465,11 @@ export default function MasterAdminPage() {
   const fetchFests = async () => {
     try {
       setIsLoading(true);
-      
+      const token = await getFreshToken();
       const [festsResponse, eventsResponse, registrationsResponse] = await Promise.all([
-        fetch(`${API_URL}/api/fests`),
-        fetch(`${API_URL}/api/events`),
-        fetch(`${API_URL}/api/registrations`)
+        fetch(`${API_URL}/api/fests`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/api/events`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/api/registrations`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
 
       if (!festsResponse.ok) {
@@ -516,9 +530,10 @@ export default function MasterAdminPage() {
 
   const fetchReportData = async () => {
     try {
+      const token = await getFreshToken();
       const [eventsRes, festsRes] = await Promise.all([
-        fetch(`${API_URL}/api/events`),
-        fetch(`${API_URL}/api/fests`),
+        fetch(`${API_URL}/api/events`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/api/fests`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       if (eventsRes.ok) {
         const data = await eventsRes.json();
