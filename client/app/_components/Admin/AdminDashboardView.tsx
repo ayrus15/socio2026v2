@@ -1,6 +1,15 @@
 "use client";
 
 import React, { useMemo, useState, useCallback } from "react";
+
+const CAMPUSES = [
+  "Central Campus (Main)",
+  "Bannerghatta Road Campus",
+  "Yeshwanthpur Campus",
+  "Kengeri Campus",
+  "Delhi NCR Campus",
+  "Pune Lavasa Campus"
+];
 import Link from "next/link";
 import {
   AreaChart,
@@ -192,7 +201,10 @@ export default function AdminDashboardView({ users, events, fests, registrations
     return { start: new Date(now.getTime() - 2 * d * 86400000), end: cutoff };
   }, [dateRange, cutoff]);
 
-  const campuses = useMemo(() => Array.from(new Set(users.map((u) => u.campus).filter(Boolean) as string[])).sort(), [users]);
+  const campuses = useMemo(() => {
+    const fromUsers = users.map((u) => u.campus).filter(Boolean) as string[];
+    return Array.from(new Set([...CAMPUSES, ...fromUsers])).sort();
+  }, [users]);
   const allDepts = useMemo(() => Array.from(new Set(events.map((e) => e.organizing_dept).filter(Boolean) as string[])).sort(), [events]);
 
   // Filtered data

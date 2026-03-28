@@ -37,6 +37,15 @@ interface Fest {
 
 const ITEMS_PER_PAGE = 12;
 
+const CAMPUSES = [
+  "Central Campus (Main)",
+  "Bannerghatta Road Campus",
+  "Yeshwanthpur Campus",
+  "Kengeri Campus",
+  "Delhi NCR Campus",
+  "Pune Lavasa Campus"
+];
+
 const ACCREDITATION_BODIES = [
   {
     id: "naac",
@@ -200,6 +209,7 @@ export default function ManageDashboard() {
   const [searchTerm, setSearchTerm] = useState("");
   const [eventsPage, setEventsPage] = useState(1);
   const [festsPage, setFestsPage] = useState(1);
+  const [campusFilter, setCampusFilter] = useState("all");
   
   // Auth Context & Session
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -267,20 +277,22 @@ export default function ManageDashboard() {
   }, [userData?.email, isMasterAdmin]);
 
 
-  // Permissions logic for Events
-  const userSpecificContextEvents = userData?.email
-    ? isMasterAdmin
-      ? (contextAllEvents as ContextEvent[])
-      : (contextAllEvents as ContextEvent[]).filter((e) => e.created_by === userData.email)
-    : [];
+  // Permissions & Campus logic for Events
+  const userSpecificContextEvents = (contextAllEvents as ContextEvent[]).filter((e) => {
+    const isOwnerOrMaster = isMasterAdmin || (userData?.email && e.created_by === userData.email);
+    const matchesCampus = campusFilter === "all" || (e as any).campus_hosted_at === campusFilter;
+    return isOwnerOrMaster && matchesCampus;
+  });
 
   // Filter Grids
   const searchedUserEvents = userSpecificContextEvents.filter((event) =>
     event.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
-  const searchedUserFests = fests.filter((fest) =>
-    fest.fest_title.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const searchedUserFests = fests.filter((fest) => {
+    const matchesSearch = fest.fest_title.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCampus = campusFilter === "all" || (fest as any).campus_hosted_at === campusFilter;
+    return matchesSearch && matchesCampus;
+  });
 
   // Pagination Helper
   const paginateArray = <T,>(array: T[], page: number) => {
@@ -507,6 +519,14 @@ export default function ManageDashboard() {
               <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 transition-colors shadow-sm text-sm font-semibold">
                 <SlidersHorizontal className="w-4 h-4 text-slate-500" /> Filter
               </button>
+              <select
+                value={campusFilter}
+                onChange={(e) => setCampusFilter(e.target.value)}
+                className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 transition-colors shadow-sm text-sm font-semibold outline-none focus:ring-2 focus:ring-[#154cb3]/20"
+              >
+                <option value="all">All Campuses</option>
+                {CAMPUSES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
             </div>
           )}
         </div>
