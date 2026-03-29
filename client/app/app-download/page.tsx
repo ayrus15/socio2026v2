@@ -63,7 +63,7 @@ const ComingSoon = () => {
         </h2>
         
         <p className="text-[#1e1e1eb6] text-base md:text-lg mb-8 max-w-2xl mx-auto">
-          SOCIO mobile is in final preparation and will be available shortly. While we complete the launch, you can use the live demo app experience today.
+          SOCIO mobile is in final preparation and will be available shortly. While we complete the launch, you can use the Pre Beta Version App experience today.
         </p>
         
         <div className="flex flex-col md:flex-row justify-center items-center gap-4 mb-12">
@@ -92,7 +92,7 @@ const ComingSoon = () => {
             rel="noreferrer"
             className="btn bg-[#FFCC00] hover:bg-[#f7b500] text-[#063168] font-medium py-3 px-6 rounded-md transition-all duration-300 shadow-md hover:shadow-lg"
           >
-            Open Demo App
+            Open Pre Beta Version App
           </a>
         </div>
       </div>
