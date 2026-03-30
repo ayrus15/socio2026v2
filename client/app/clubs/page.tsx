@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 
@@ -28,7 +28,7 @@ const buildCentresUrl = (category: string | null, searchValue: string) => {
   return queryString ? `/clubs?${queryString}` : "/clubs";
 };
 
-const CentresPage = () => {
+const CentresPageContent = () => {
   const searchParams = useSearchParams();
   const router = useRouter();
   const categoryParam = searchParams.get("category");
@@ -297,4 +297,19 @@ const CentresPage = () => {
   );
 };
 
-export default CentresPage;
+function CentresPageLoadingFallback() {
+  return (
+    <div className="min-h-screen bg-white flex justify-center items-center">
+      <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-[#154CB3]"></div>
+      <p className="ml-4 text-xl text-[#154CB3]">Loading centres...</p>
+    </div>
+  );
+}
+
+export default function CentresPage() {
+  return (
+    <Suspense fallback={<CentresPageLoadingFallback />}>
+      <CentresPageContent />
+    </Suspense>
+  );
+}

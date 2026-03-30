@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { EventsSection } from "../_components/Discover/EventsSection";
 import { FullWidthCarousel } from "../_components/Discover/ImageCarousel";
@@ -54,7 +54,7 @@ const findCampusByQueryValue = (value: string | null) => {
   );
 };
 
-const DiscoverPage = () => {
+const DiscoverPageContent = () => {
   const searchParams = useSearchParams();
   const router = useRouter();
   const campusParam = searchParams.get("campus");
@@ -431,4 +431,19 @@ const DiscoverPage = () => {
   );
 };
 
-export default DiscoverPage;
+function DiscoverPageLoadingFallback() {
+  return (
+    <div className="min-h-screen bg-white flex justify-center items-center">
+      <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-[#154CB3]"></div>
+      <p className="ml-4 text-xl text-[#154CB3]">Loading discover page...</p>
+    </div>
+  );
+}
+
+export default function DiscoverPage() {
+  return (
+    <Suspense fallback={<DiscoverPageLoadingFallback />}>
+      <DiscoverPageContent />
+    </Suspense>
+  );
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { formatDateRange } from "@/lib/dateUtils";
@@ -41,7 +41,7 @@ const buildFestsUrl = (category: string | null, searchValue: string) => {
   return queryString ? `/fests?${queryString}` : "/fests";
 };
 
-const FestsPage = () => {
+const FestsPageContent = () => {
   const searchParams = useSearchParams();
   const router = useRouter();
   const categoryParam = searchParams.get("category");
@@ -366,5 +366,20 @@ const FestsPage = () => {
   );
 };
 
-export default FestsPage;
+function FestsPageLoadingFallback() {
+  return (
+    <div className="min-h-screen bg-white flex justify-center items-center">
+      <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-[#154CB3]"></div>
+      <p className="ml-4 text-xl text-[#154CB3]">Loading fests...</p>
+    </div>
+  );
+}
+
+export default function FestsPage() {
+  return (
+    <Suspense fallback={<FestsPageLoadingFallback />}>
+      <FestsPageContent />
+    </Suspense>
+  );
+}
 
