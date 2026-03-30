@@ -19,6 +19,8 @@ type OrganiserEvent = {
 type OrganiserHistoryModalProps = {
   isOpen: boolean;
   organiserIdentifier: string | null;
+  organiserOptions: string[];
+  onOrganiserChange: (identifier: string | null) => void;
   onClose: () => void;
 };
 
@@ -57,12 +59,15 @@ const getEventStatus = (eventDate: string) => {
 export default function OrganiserHistoryModal({
   isOpen,
   organiserIdentifier,
+  organiserOptions,
+  onOrganiserChange,
   onClose,
 }: OrganiserHistoryModalProps) {
   const { session } = useAuth();
   const [events, setEvents] = useState<OrganiserEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeIdentifier, setActiveIdentifier] = useState("");
 
   const supabase = useMemo(
     () =>
@@ -100,7 +105,25 @@ export default function OrganiserHistoryModal({
   );
 
   useEffect(() => {
-    if (!isOpen || !organiserIdentifier) return;
+    if (!isOpen) return;
+
+    if (organiserIdentifier) {
+      setActiveIdentifier(organiserIdentifier);
+      return;
+    }
+
+    setActiveIdentifier("");
+  }, [isOpen, organiserIdentifier]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (!activeIdentifier) {
+      setEvents([]);
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
 
     let alive = true;
     const load = async () => {
@@ -108,7 +131,7 @@ export default function OrganiserHistoryModal({
       setError(null);
 
       try {
-        const result = await getEventsByOrganiser(organiserIdentifier);
+        const result = await getEventsByOrganiser(activeIdentifier);
         if (alive) {
           setEvents(result);
         }
@@ -129,7 +152,7 @@ export default function OrganiserHistoryModal({
     return () => {
       alive = false;
     };
-  }, [isOpen, organiserIdentifier, getEventsByOrganiser]);
+  }, [isOpen, activeIdentifier, getEventsByOrganiser]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -150,7 +173,12 @@ export default function OrganiserHistoryModal({
     };
   }, [isOpen, onClose]);
 
-  if (!isOpen || !organiserIdentifier) return null;
+  const handleIdentifierChange = (identifier: string) => {
+    setActiveIdentifier(identifier);
+    onOrganiserChange(identifier || null);
+  };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[110]">
@@ -171,7 +199,9 @@ export default function OrganiserHistoryModal({
               <h3 className="mt-1 text-lg font-bold text-slate-900">
                 Organiser Event History
               </h3>
-              <p className="mt-1 text-sm text-slate-500 break-all">{organiserIdentifier}</p>
+              <p className="mt-1 text-sm text-slate-500 break-all">
+                {activeIdentifier || "Select an organiser to view event history"}
+              </p>
             </div>
 
             <button
@@ -186,12 +216,39 @@ export default function OrganiserHistoryModal({
         </div>
 
         <div className="px-6 py-5">
+          <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <label htmlFor="organiser-history-select" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Choose organiser
+            </label>
+            <select
+              id="organiser-history-select"
+              value={activeIdentifier}
+              onChange={(event) => handleIdentifierChange(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#154CB3] focus:ring-2 focus:ring-[#154CB3]/20"
+            >
+              <option value="">Select an organiser</option>
+              {organiserOptions.map((identifier) => (
+                <option key={identifier} value={identifier}>
+                  {identifier}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {isLoading ? (
             <div className="flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 py-16">
               <div className="flex items-center gap-2 text-slate-500">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Fetching organiser events...
               </div>
+            </div>
+          ) : !activeIdentifier ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center">
+              <History className="h-8 w-8 text-slate-300" />
+              <p className="mt-3 text-base font-semibold text-slate-700">Choose an organiser</p>
+              <p className="mt-1 text-sm text-slate-500">
+                Select an organiser from the dropdown to pull up their event history.
+              </p>
             </div>
           ) : error ? (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

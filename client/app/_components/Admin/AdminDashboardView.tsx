@@ -195,14 +195,23 @@ export default function AdminDashboardView({ users, events, fests, registrations
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [showExport, setShowExport] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [selectedOrganiser, setSelectedOrganiser] = useState<string | null>(null);
 
-  const openOrganiserHistory = useCallback((email: string) => {
-    setSelectedOrganiser(email);
+  const openOrganiserHistory = useCallback((email?: string | null) => {
+    if (email) {
+      setSelectedOrganiser(email);
+    }
+    setIsHistoryModalOpen(true);
   }, []);
 
   const closeOrganiserHistory = useCallback(() => {
+    setIsHistoryModalOpen(false);
     setSelectedOrganiser(null);
+  }, []);
+
+  const handleOrganiserSelection = useCallback((email: string | null) => {
+    setSelectedOrganiser(email);
   }, []);
 
   const today = new Date().toLocaleDateString("en-IN", {
@@ -356,6 +365,10 @@ export default function AdminDashboardView({ users, events, fests, registrations
       .slice(0, 5);
   }, [events]);
 
+  const organiserOptions = useMemo(() => {
+    return Array.from(new Set(events.map((e) => e.created_by).filter(Boolean))).sort();
+  }, [events]);
+
   // Recent activity
   const recentActivity = useMemo(() => {
     type Item = { icon: "user" | "event" | "fest"; text: string; sub: string; time: Date; isNew?: boolean };
@@ -457,6 +470,13 @@ export default function AdminDashboardView({ users, events, fests, registrations
           <p className="text-sm text-slate-500 mt-0.5">{today}</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => openOrganiserHistory(null)}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold border border-blue-100 bg-blue-50 text-[#154cb3] px-3.5 py-2 rounded-lg hover:bg-blue-100 transition-all"
+          >
+            <History className="w-4 h-4" /> Event Backtracking
+          </button>
           <Link
             href="/create/event"
             className="inline-flex items-center gap-1.5 text-sm font-medium border border-slate-200 text-slate-700 px-3.5 py-2 rounded-lg hover:bg-slate-50 transition-all"
@@ -788,8 +808,10 @@ export default function AdminDashboardView({ users, events, fests, registrations
       </div>
 
       <OrganiserHistoryModal
-        isOpen={Boolean(selectedOrganiser)}
+        isOpen={isHistoryModalOpen}
         organiserIdentifier={selectedOrganiser}
+        organiserOptions={organiserOptions}
+        onOrganiserChange={handleOrganiserSelection}
         onClose={closeOrganiserHistory}
       />
     </div>
