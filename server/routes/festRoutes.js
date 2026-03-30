@@ -250,41 +250,12 @@ router.put(
 
     // Get the new title
     const newTitle = updateData.fest_title ?? updateData.festTitle ?? updateData.title;
-    
-    // Check if title changed and generate new fest_id
-    let newFestId = festId; // Default to current ID
     const titleChanged = newTitle && newTitle.trim() !== existingFest.fest_title;
-    
-    if (titleChanged) {
-      // Generate new slug-based ID from new title
-      newFestId = newTitle
-        .toLowerCase()
-        .trim()
-        .replace(/[^\w\s-]/g, "")
-        .replace(/[\s_-]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-      
-      if (!newFestId) {
-        newFestId = uuidv4().replace(/-/g, "");
-      }
-      
-      // Check if new fest_id already exists (and it's not the same fest)
-      if (newFestId !== festId) {
-        const existingFestWithId = await queryOne("fest", { where: { fest_id: newFestId } });
-        if (existingFestWithId) {
-          return res.status(400).json({ 
-            error: `A fest with the ID '${newFestId}' already exists. Please use a different title.` 
-          });
-        }
-      }
-      
-      console.log(`Title changed: Updating fest_id from '${festId}' to '${newFestId}'`);
-    }
 
     const updatePayload = {};
 
     const mapFields = [
-      ["fest_title", updateData.fest_title ?? updateData.festTitle ?? updateData.title],
+      ["fest_title", newTitle],
       ["description", updateData.description ?? updateData.detailed_description ?? updateData.detailedDescription],
       ["opening_date", updateData.opening_date ?? updateData.openingDate],
       ["closing_date", updateData.closing_date ?? updateData.closingDate],
@@ -318,35 +289,24 @@ router.put(
       return res.status(400).json({ error: "No valid fields to update" });
     }
 
-    // Add new fest_id to payload if it changed
-    if (newFestId !== festId) {
-      updatePayload.fest_id = newFestId;
-    }
-    
     updatePayload.updated_at = new Date().toISOString();
 
-    // If fest_id changed, update related records first
-    if (newFestId !== festId) {
+    if (titleChanged) {
       try {
-        // Update events that belong to this fest
-        await update("events", { fest: newFestId }, { fest: festId });
-        console.log(`Updated events from fest '${festId}' to '${newFestId}'`);
-      } catch (eventsError) {
-        console.log(`No events to update or error: ${eventsError.message}`);
-      }
-      
-      try {
-        // Update notifications: event_id, event_title, and action_url so links stay valid
-        const updatedTitle = newTitle?.trim() || existingFest.fest_title;
+        // Update notifications event_title so they match the new name
+        const updatedTitle = newTitle.trim();
         await update("notifications", { 
-          event_id: newFestId, 
           event_title: updatedTitle,
-          action_url: `/fest/${newFestId}` 
         }, { event_id: festId });
-        console.log(`Updated notifications from fest_id '${festId}' to '${newFestId}'`);
+        console.log(`Updated notification titles for fest_id '${festId}' to '${updatedTitle}'`);
       } catch (notifError) {
         console.log(`No notifications to update or error: ${notifError.message}`);
       }
+      
+      // Update any legacy events that might be referencing the fest by its OLD title instead of ID
+      try {
+        await update("events", { fest: festId }, { fest: existingFest.fest_title });
+      } catch (eventsError) {}
     }
 
     const updated = await update("fest", updatePayload, { fest_id: festId });
@@ -394,8 +354,8 @@ router.put(
     return res.status(200).json({
       message: "Fest updated successfully",
       fest: mapFestResponse(updatedFest),
-      fest_id: newFestId,
-      id_changed: newFestId !== festId
+      fest_id: festId,
+      id_changed: false
     });
 
   } catch (error) {

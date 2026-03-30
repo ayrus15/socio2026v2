@@ -99,8 +99,8 @@ router.post("/report/data", (req, res, next) => {
       const unauthorizedEvents = events.filter(event => {
         // Check if organiser created this event
         if (event.created_by === userEmail) return false;
-        // Check if event belongs to the selected fest (fest column stores fest_title)
-        if (festId && festTitle && event.fest === festTitle) {
+        // Check if event belongs to the selected fest (fest column now stores fest_id, but legacy data may store fest_title)
+        if (festId && (event.fest === festId || (festTitle && event.fest === festTitle))) {
           // We'll verify fest ownership below
           return false;
         }
