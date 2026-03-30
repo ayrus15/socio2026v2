@@ -327,23 +327,24 @@ const EventsPageContent = () => {
           <div>
             {paginatedEvents.length > 0 ? (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8 lg:gap-12">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
                   {paginatedEvents.map((event) => (
-                    <EventCard
-                      key={event.id}
-                      idForLink={event.event_id}
-                      title={event.title}
-                      festName={event.fest}
-                      dept={event.organizing_dept || ""}
-                      date={event.event_date}
-                      time={event.event_time}
-                      location={event.venue || "Venue TBD"}
-                      tags={event.category ? [event.category] : []}
-                      image={
-                        event.event_image_url ||
-                        "https://placehold.co/400x250/e2e8f0/64748b?text=No+Image"
-                      }
-                    />
+                    <div key={event.id} className="min-w-0 h-full">
+                      <EventCard
+                        idForLink={event.event_id}
+                        title={event.title}
+                        festName={event.fest}
+                        dept={event.organizing_dept || ""}
+                        date={event.event_date}
+                        time={event.event_time}
+                        location={event.venue || "Venue TBD"}
+                        tags={event.category ? [event.category] : []}
+                        image={
+                          event.event_image_url ||
+                          "https://placehold.co/400x250/e2e8f0/64748b?text=No+Image"
+                        }
+                      />
+                    </div>
                   ))}
                 </div>
 

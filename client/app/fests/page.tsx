@@ -148,16 +148,17 @@ const FestsPage = () => {
 
             {paginatedFests.length > 0 ? (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8 lg:gap-12">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
                   {paginatedFests.map((fest) => (
-                    <FestCard
-                      key={fest.fest_id}
-                      title={fest.fest_title}
-                      dept={fest.organizing_dept}
-                      description={fest.description}
-                      dateRange={formatDateRange(fest.opening_date, fest.closing_date)}
-                      image={fest.fest_image_url}
-                    />
+                    <div key={fest.fest_id} className="min-w-0 h-full">
+                      <FestCard
+                        title={fest.fest_title}
+                        dept={fest.organizing_dept}
+                        description={fest.description}
+                        dateRange={formatDateRange(fest.opening_date, fest.closing_date)}
+                        image={fest.fest_image_url}
+                      />
+                    </div>
                   ))}
                 </div>
 
