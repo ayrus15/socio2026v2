@@ -215,7 +215,7 @@ const EventsPageContent = () => {
 
   return (
     <div className="min-h-screen bg-white">
-      <main className="container mx-auto px-4 pt-2 pb-8 sm:pt-3 sm:pb-10 max-w-7xl">
+      <main className="container mx-auto px-4 pt-3 pb-8 sm:pt-4 sm:pb-10 max-w-7xl">
         <div className="mb-6 sm:mb-8">
           <div className="flex flex-row items-start justify-between gap-3 sm:gap-4 mb-3 sm:mb-4">
             <div className="min-w-0">
