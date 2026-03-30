@@ -7,7 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { NotificationSystem } from "./NotificationSystem";
 import TermsConsentModal from "./TermsConsentModal";
 import { useState, useEffect, useCallback, memo } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 
 // OPTIMIZATION: Move static data outside component to prevent recreation on every render
 const navigationLinks = [
@@ -47,6 +47,10 @@ const navigationLinks = [
 function NavigationBar() {
   const { session, userData, isLoading, signInWithGoogle, signOut } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isEventsPage = pathname === "/events";
+  const searchParam = searchParams.get("search") || "";
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -64,6 +68,15 @@ function NavigationBar() {
   useEffect(() => {
     setAvatarLoadError(false);
   }, [displayAvatar]);
+
+  useEffect(() => {
+    if (isEventsPage) {
+      setSearchQuery(searchParam);
+      return;
+    }
+
+    setSearchQuery("");
+  }, [isEventsPage, searchParam]);
   
 
   // OPTIMIZATION: Memoize callbacks to prevent recreation on every render
@@ -89,10 +102,23 @@ function NavigationBar() {
 
   const handleSearchSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    if (searchQuery.trim()) {
-      router.push(`/events?search=${encodeURIComponent(searchQuery.trim())}`);
+    const trimmedSearch = searchQuery.trim();
+    const params = new URLSearchParams();
+
+    if (isEventsPage) {
+      const activeCategory = searchParams.get("category");
+      if (activeCategory) {
+        params.set("category", activeCategory);
+      }
     }
-  }, [searchQuery, router]);
+
+    if (trimmedSearch) {
+      params.set("search", trimmedSearch);
+    }
+
+    const queryString = params.toString();
+    router.push(queryString ? `/events?${queryString}` : "/events");
+  }, [isEventsPage, searchParams, searchQuery, router]);
 
   const handleDropdownHover = useCallback((linkName: string | null) => {
     setActiveDropdown(linkName);

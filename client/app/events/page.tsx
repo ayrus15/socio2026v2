@@ -30,7 +30,22 @@ interface FilterOption {
   active: boolean;
 }
 
-const EventsPageContent = () => {
+const buildEventsUrl = (category: string | null, searchValue: string) => {
+  const params = new URLSearchParams();
+  if (category && category.toLowerCase() !== "all") {
+    params.set("category", category);
+  }
+
+  const normalizedSearch = searchValue.trim();
+  if (normalizedSearch) {
+    params.set("search", normalizedSearch);
+  }
+
+  const queryString = params.toString();
+  return queryString ? `/events?${queryString}` : "/events";
+};
+
+const EventsPage = () => {
   const searchParams = useSearchParams();
   const router = useRouter();
   const categoryParam = searchParams.get("category");
@@ -89,6 +104,24 @@ const EventsPageContent = () => {
     setSearchQuery(searchParam);
   }, [searchParam]);
 
+  // Keep URL in sync as users type in the page-level search box.
+  useEffect(() => {
+    const normalizedSearch = searchQuery.trim();
+    const normalizedParamSearch = searchParam.trim();
+
+    if (normalizedSearch === normalizedParamSearch) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      router.replace(buildEventsUrl(categoryParam, normalizedSearch), {
+        scroll: false,
+      });
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [categoryParam, router, searchParam, searchQuery]);
+
   const eventsToFilter = Array.isArray(allEvents) ? allEvents : [];
   const filteredEvents = (eventsToFilter as FetchedEvent[]).filter((event) => {
     // Category filter
@@ -134,11 +167,14 @@ const EventsPageContent = () => {
         active: filter.name === clickedFilterName,
       }))
     );
-    if (clickedFilterName === "All") {
-      router.push(`/events`);
-    } else {
-      router.push(`/events?category=${clickedFilterName}`);
-    }
+
+    const nextCategory = clickedFilterName === "All" ? null : clickedFilterName;
+    router.push(buildEventsUrl(nextCategory, searchQuery));
+  };
+
+  const handlePageSearchSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    router.push(buildEventsUrl(categoryParam, searchQuery), { scroll: false });
   };
 
   if (isLoading) {
@@ -209,6 +245,56 @@ const EventsPageContent = () => {
           <p className="text-gray-500 mb-4 text-sm sm:text-base">
             Browse through all upcoming events happening on campus.
           </p>
+
+          <form onSubmit={handlePageSearchSubmit} className="mb-6 sm:mb-8 max-w-3xl">
+            <label htmlFor="events-page-search" className="sr-only">
+              Search events
+            </label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <input
+                  id="events-page-search"
+                  type="text"
+                  placeholder="Search by title, venue, department, category, or fest"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full rounded-full border border-gray-300 px-4 py-2.5 pr-20 text-sm sm:text-base focus:outline-none focus:ring-1 focus:ring-[#154CB3] focus:border-[#154CB3]"
+                />
+                {searchQuery.trim() ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full px-2 py-1 text-xs font-semibold text-[#154CB3] hover:bg-[#154CB3]/10 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                ) : (
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      className="h-4 w-4"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="m21 21-4.35-4.35m1.6-5.15a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"
+                      />
+                    </svg>
+                  </span>
+                )}
+              </div>
+              <button
+                type="submit"
+                className="rounded-full bg-[#154CB3] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#0f3f95] transition-colors cursor-pointer"
+              >
+                Search
+              </button>
+            </div>
+          </form>
 
           <div className="flex flex-wrap gap-2 mb-6 sm:mb-8">
             {filterOptions.map((filter, index) => (
