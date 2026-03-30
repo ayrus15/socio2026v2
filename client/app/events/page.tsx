@@ -45,7 +45,7 @@ const buildEventsUrl = (category: string | null, searchValue: string) => {
   return queryString ? `/events?${queryString}` : "/events";
 };
 
-const EventsPage = () => {
+const EventsPageContent = () => {
   const searchParams = useSearchParams();
   const router = useRouter();
   const categoryParam = searchParams.get("category");
