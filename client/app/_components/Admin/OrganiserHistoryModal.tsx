@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, CalendarDays, FolderKanban, History, Loader2, X } from "lucide-react";
+import { Building2, CalendarDays, ClipboardList, FolderKanban, History, Loader2, X } from "lucide-react";
 import { createBrowserClient } from "@supabase/ssr";
 import { useAuth } from "@/context/AuthContext";
 
@@ -14,7 +14,24 @@ type OrganiserEvent = {
   organizing_dept?: string | null;
   created_by: string;
   created_at: string;
+  registration_count?: number | null;
 };
+
+type OrganiserRegistration = {
+  registration_id: string;
+  event_id: string;
+  registration_type?: string | null;
+  created_at: string;
+  user_email?: string | null;
+  individual_name?: string | null;
+  individual_email?: string | null;
+  team_name?: string | null;
+  team_leader_name?: string | null;
+  team_leader_email?: string | null;
+  teammates?: any[] | string | null;
+};
+
+type BacktrackingView = "events" | "registrations";
 
 type OrganiserHistoryModalProps = {
   isOpen: boolean;
@@ -56,6 +73,58 @@ const getEventStatus = (eventDate: string) => {
   };
 };
 
+const normalizeRegistrationType = (value?: string | null) => {
+  return (value || "individual").toLowerCase() === "team" ? "team" : "individual";
+};
+
+const parseTeammates = (teammates: OrganiserRegistration["teammates"]) => {
+  if (Array.isArray(teammates)) return teammates;
+  if (typeof teammates === "string" && teammates.trim()) {
+    try {
+      const parsed = JSON.parse(teammates);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+const getRegistrantName = (registration: OrganiserRegistration) => {
+  if (normalizeRegistrationType(registration.registration_type) === "team") {
+    return (
+      registration.team_name ||
+      registration.team_leader_name ||
+      registration.team_leader_email ||
+      "Team Registration"
+    );
+  }
+
+  return (
+    registration.individual_name ||
+    registration.individual_email ||
+    registration.user_email ||
+    "Individual Registration"
+  );
+};
+
+const getRegistrantEmail = (registration: OrganiserRegistration) => {
+  if (normalizeRegistrationType(registration.registration_type) === "team") {
+    return registration.team_leader_email || registration.user_email || "";
+  }
+
+  return registration.individual_email || registration.user_email || "";
+};
+
+const getTeamSize = (registration: OrganiserRegistration) => {
+  if (normalizeRegistrationType(registration.registration_type) !== "team") {
+    return 1;
+  }
+
+  const teammates = parseTeammates(registration.teammates);
+  return 1 + teammates.length;
+};
+
 export default function OrganiserHistoryModal({
   isOpen,
   organiserIdentifier,
@@ -65,9 +134,12 @@ export default function OrganiserHistoryModal({
 }: OrganiserHistoryModalProps) {
   const { session } = useAuth();
   const [events, setEvents] = useState<OrganiserEvent[]>([]);
+  const [registrations, setRegistrations] = useState<OrganiserRegistration[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeIdentifier, setActiveIdentifier] = useState("");
+  const [activeView, setActiveView] = useState<BacktrackingView>("events");
+  const [selectedEventId, setSelectedEventId] = useState("all");
 
   const supabase = useMemo(
     () =>
@@ -78,19 +150,23 @@ export default function OrganiserHistoryModal({
     []
   );
 
+  const applyAuthenticatedSession = useCallback(async () => {
+    if (session?.access_token && session?.refresh_token) {
+      await supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      });
+    }
+  }, [session?.access_token, session?.refresh_token, supabase]);
+
   const getEventsByOrganiser = useCallback(
     async (identifier: string) => {
-      if (session?.access_token && session?.refresh_token) {
-        await supabase.auth.setSession({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-        });
-      }
+      await applyAuthenticatedSession();
 
       const { data, error: fetchError } = await supabase
         .from("events")
         .select(
-          "event_id, title, event_date, fest, organizing_dept, created_by, created_at"
+          "event_id, title, event_date, fest, organizing_dept, created_by, created_at, registration_count"
         )
         .eq("created_by", identifier)
         .order("created_at", { ascending: false });
@@ -101,7 +177,32 @@ export default function OrganiserHistoryModal({
 
       return (data ?? []) as OrganiserEvent[];
     },
-    [session?.access_token, session?.refresh_token, supabase]
+    [applyAuthenticatedSession, supabase]
+  );
+
+  const getRegistrationsByEventIds = useCallback(
+    async (eventIds: string[]) => {
+      if (eventIds.length === 0) {
+        return [];
+      }
+
+      await applyAuthenticatedSession();
+
+      const { data, error: fetchError } = await supabase
+        .from("registrations")
+        .select(
+          "registration_id, event_id, registration_type, created_at, user_email, individual_name, individual_email, team_name, team_leader_name, team_leader_email, teammates"
+        )
+        .in("event_id", eventIds)
+        .order("created_at", { ascending: false });
+
+      if (fetchError) {
+        throw fetchError;
+      }
+
+      return (data ?? []) as OrganiserRegistration[];
+    },
+    [applyAuthenticatedSession, supabase]
   );
 
   useEffect(() => {
@@ -109,10 +210,14 @@ export default function OrganiserHistoryModal({
 
     if (organiserIdentifier) {
       setActiveIdentifier(organiserIdentifier);
+      setSelectedEventId("all");
+      setActiveView("events");
       return;
     }
 
     setActiveIdentifier("");
+    setSelectedEventId("all");
+    setActiveView("events");
   }, [isOpen, organiserIdentifier]);
 
   useEffect(() => {
@@ -120,6 +225,7 @@ export default function OrganiserHistoryModal({
 
     if (!activeIdentifier) {
       setEvents([]);
+      setRegistrations([]);
       setError(null);
       setIsLoading(false);
       return;
@@ -132,12 +238,17 @@ export default function OrganiserHistoryModal({
 
       try {
         const result = await getEventsByOrganiser(activeIdentifier);
+        const eventIds = result.map((event) => event.event_id).filter(Boolean);
+        const registrationResult = await getRegistrationsByEventIds(eventIds);
+
         if (alive) {
           setEvents(result);
+          setRegistrations(registrationResult);
         }
       } catch (err: any) {
         if (alive) {
           setEvents([]);
+          setRegistrations([]);
           setError(err?.message || "Failed to fetch organiser history");
         }
       } finally {
@@ -152,7 +263,7 @@ export default function OrganiserHistoryModal({
     return () => {
       alive = false;
     };
-  }, [isOpen, activeIdentifier, getEventsByOrganiser]);
+  }, [isOpen, activeIdentifier, getEventsByOrganiser, getRegistrationsByEventIds]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -175,8 +286,75 @@ export default function OrganiserHistoryModal({
 
   const handleIdentifierChange = (identifier: string) => {
     setActiveIdentifier(identifier);
+    setSelectedEventId("all");
+    setActiveView("events");
     onOrganiserChange(identifier || null);
   };
+
+  const filteredRegistrations = useMemo(() => {
+    if (selectedEventId === "all") {
+      return registrations;
+    }
+
+    return registrations.filter((registration) => registration.event_id === selectedEventId);
+  }, [registrations, selectedEventId]);
+
+  const registrationSummary = useMemo(() => {
+    const summary = {
+      total: filteredRegistrations.length,
+      individual: 0,
+      team: 0,
+    };
+
+    filteredRegistrations.forEach((registration) => {
+      if (normalizeRegistrationType(registration.registration_type) === "team") {
+        summary.team += 1;
+      } else {
+        summary.individual += 1;
+      }
+    });
+
+    return summary;
+  }, [filteredRegistrations]);
+
+  const eventLookup = useMemo(() => {
+    return new Map(events.map((event) => [event.event_id, event]));
+  }, [events]);
+
+  const registrationsByEvent = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { eventId: string; title: string; count: number; latestAt: string; team: number; individual: number }
+    >();
+
+    filteredRegistrations.forEach((registration) => {
+      const eventId = registration.event_id;
+      const linkedEvent = eventLookup.get(eventId);
+      const current = grouped.get(eventId) || {
+        eventId,
+        title: linkedEvent?.title || "Unknown Event",
+        count: 0,
+        latestAt: registration.created_at,
+        team: 0,
+        individual: 0,
+      };
+
+      current.count += 1;
+      if (normalizeRegistrationType(registration.registration_type) === "team") {
+        current.team += 1;
+      } else {
+        current.individual += 1;
+      }
+
+      if (new Date(registration.created_at).getTime() > new Date(current.latestAt).getTime()) {
+        current.latestAt = registration.created_at;
+      }
+
+      grouped.set(eventId, current);
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => b.count - a.count);
+  }, [eventLookup, filteredRegistrations]);
 
   if (!isOpen) return null;
 
@@ -235,11 +413,36 @@ export default function OrganiserHistoryModal({
             </select>
           </div>
 
+          <div className="mb-4 flex gap-2 rounded-xl border border-slate-200 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setActiveView("events")}
+              className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                activeView === "events"
+                  ? "bg-[#154CB3] text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Events
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView("registrations")}
+              className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                activeView === "registrations"
+                  ? "bg-[#154CB3] text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Event Registrations
+            </button>
+          </div>
+
           {isLoading ? (
             <div className="flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 py-16">
               <div className="flex items-center gap-2 text-slate-500">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Fetching organiser events...
+                Fetching organiser events and registrations...
               </div>
             </div>
           ) : !activeIdentifier ? (
@@ -254,7 +457,7 @@ export default function OrganiserHistoryModal({
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
             </div>
-          ) : events.length === 0 ? (
+          ) : activeView === "events" ? events.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center">
               <History className="h-8 w-8 text-slate-300" />
               <p className="mt-3 text-base font-semibold text-slate-700">No events created yet</p>
@@ -300,6 +503,12 @@ export default function OrganiserHistoryModal({
                         <Building2 className="h-3 w-3" />
                         {event.organizing_dept || "No Department"}
                       </span>
+                      {typeof event.registration_count === "number" && (
+                        <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">
+                          <ClipboardList className="h-3 w-3" />
+                          {event.registration_count} registrations
+                        </span>
+                      )}
                     </div>
 
                     <div className="mt-3">
@@ -313,6 +522,125 @@ export default function OrganiserHistoryModal({
                   </div>
                 );
               })}
+            </div>
+          ) : events.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center">
+              <History className="h-8 w-8 text-slate-300" />
+              <p className="mt-3 text-base font-semibold text-slate-700">No events available</p>
+              <p className="mt-1 text-sm text-slate-500">
+                This organiser has no events yet, so registrations are unavailable.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <label htmlFor="registration-event-filter" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Filter by event
+                </label>
+                <select
+                  id="registration-event-filter"
+                  value={selectedEventId}
+                  onChange={(event) => setSelectedEventId(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#154CB3] focus:ring-2 focus:ring-[#154CB3]/20"
+                >
+                  <option value="all">All organiser events</option>
+                  {events.map((event) => (
+                    <option key={event.event_id} value={event.event_id}>
+                      {event.title || "Untitled Event"}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+                    {registrationSummary.total} total
+                  </span>
+                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                    {registrationSummary.individual} individual
+                  </span>
+                  <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                    {registrationSummary.team} team
+                  </span>
+                </div>
+              </div>
+
+              {filteredRegistrations.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center">
+                  <History className="h-8 w-8 text-slate-300" />
+                  <p className="mt-3 text-base font-semibold text-slate-700">No registrations found</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    No registrations match the selected event filter.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-sm font-semibold text-slate-900">Registrations by Event</p>
+                    <div className="mt-3 space-y-2">
+                      {registrationsByEvent.map((grouped) => (
+                        <div key={grouped.eventId} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-900">{grouped.title}</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {grouped.individual} individual · {grouped.team} team · Latest {formatDate(grouped.latestAt)}
+                              </p>
+                            </div>
+                            <span className="inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+                              {grouped.count}
+                            </span>
+                          </div>
+                          <Link
+                            href={`/event/${grouped.eventId}`}
+                            className="mt-2 inline-flex items-center text-xs font-semibold text-[#154CB3] hover:underline"
+                          >
+                            Open event details
+                          </Link>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-sm font-semibold text-slate-900">Recent Registrations</p>
+                    <div className="mt-3 space-y-2">
+                      {filteredRegistrations.slice(0, 20).map((registration) => {
+                        const registrationType = normalizeRegistrationType(registration.registration_type);
+                        const linkedEvent = eventLookup.get(registration.event_id);
+                        const registrantName = getRegistrantName(registration);
+                        const registrantEmail = getRegistrantEmail(registration);
+                        const teamSize = getTeamSize(registration);
+
+                        return (
+                          <div
+                            key={`${registration.registration_id}-${registration.event_id}-${registration.created_at}`}
+                            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-900">{registrantName}</p>
+                                <p className="mt-1 truncate text-xs text-slate-500">{registrantEmail || "No email available"}</p>
+                                <p className="mt-1 text-[11px] text-slate-500">
+                                  {(linkedEvent?.title || "Unknown Event")} · Registered on {formatDate(registration.created_at)}
+                                </p>
+                              </div>
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                  registrationType === "team"
+                                    ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                    : "bg-blue-50 text-blue-700 border border-blue-200"
+                                }`}
+                              >
+                                {registrationType === "team" ? `Team (${teamSize})` : "Individual"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
