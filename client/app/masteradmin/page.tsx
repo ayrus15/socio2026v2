@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import ExcelJS from "exceljs";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -100,6 +100,24 @@ type Registration = {
   teammates?: any[];
 };
 
+type PaginationState = {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+};
+
+const createDefaultPagination = (page = 1): PaginationState => ({
+  page,
+  pageSize: ITEMS_PER_PAGE,
+  totalItems: 0,
+  totalPages: 1,
+  hasNext: false,
+  hasPrev: page > 1,
+});
+
 const ACCREDITATION_BODIES = [
   { id: "naac", name: "NAAC", fullName: "National Assessment and Accreditation Council", description: "India's primary accreditation body for higher education institutions.", focus: "Governance, teaching learning, research, infrastructure, student support, best practices." },
   { id: "nba", name: "NBA", fullName: "National Board of Accreditation", description: "Program level accreditation mainly for engineering and technical courses.", focus: "Outcome Based Education, curriculum quality, placements." },
@@ -128,7 +146,7 @@ export default function MasterAdminPage() {
   
   // User management state
   const [users, setUsers] = useState<User[]>([]);
-  const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
+  const [userPagination, setUserPagination] = useState<PaginationState>(createDefaultPagination());
   const [userSearchQuery, setUserSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
@@ -138,7 +156,7 @@ export default function MasterAdminPage() {
   
   // Event management state
   const [events, setEvents] = useState<Event[]>([]);
-  const [filteredEvents, setFilteredEvents] = useState<Event[]>([]);
+  const [eventPagination, setEventPagination] = useState<PaginationState>(createDefaultPagination());
   const [eventSearchQuery, setEventSearchQuery] = useState("");
   const [showDeleteEventConfirm, setShowDeleteEventConfirm] = useState<string | null>(null);
   const [eventPage, setEventPage] = useState(1);
@@ -152,7 +170,7 @@ export default function MasterAdminPage() {
 
   // Fest management state
   const [fests, setFests] = useState<Fest[]>([]);
-  const [filteredFests, setFilteredFests] = useState<Fest[]>([]);
+  const [festPagination, setFestPagination] = useState<PaginationState>(createDefaultPagination());
   const [festSearchQuery, setFestSearchQuery] = useState("");
   const [showDeleteFestConfirm, setShowDeleteFestConfirm] = useState<string | null>(null);
   const [festPage, setFestPage] = useState(1);
@@ -187,18 +205,12 @@ export default function MasterAdminPage() {
   useEffect(() => {
     if (!isMasterAdmin || !authToken) return;
     
-    if (activeTab === "users") {
-      fetchUsers();
-    } else if (activeTab === "events") {
-      fetchEvents();
-    } else if (activeTab === "fests") {
-      fetchFests();
-    } else if (activeTab === "dashboard") {
+    if (activeTab === "dashboard") {
       fetchDashboardData();
     } else if (activeTab === "notifications") {
       // Ensure users/events are loaded for the notification composer
-      if (users.length === 0) fetchUsers();
-      if (events.length === 0) fetchEvents();
+      if (users.length === 0) fetchUsers({ unpaged: true });
+      if (events.length === 0) fetchEvents({ unpaged: true });
     } else if (activeTab === "report") {
       // Fetch events and fests for report tab
       fetchReportData();
@@ -206,47 +218,8 @@ export default function MasterAdminPage() {
   }, [activeTab, isMasterAdmin, authToken]);
 
   useEffect(() => {
-    let filtered = users;
-
-    if (debouncedUserSearch) {
-      const query = debouncedUserSearch.toLowerCase();
-      filtered = filtered.filter(
-        (user) =>
-          user.email.toLowerCase().includes(query) ||
-          user.name?.toLowerCase().includes(query)
-      );
-    }
-
-    if (roleFilter !== "all") {
-      switch (roleFilter) {
-        case "organiser":
-          filtered = filtered.filter((u) => u.is_organiser);
-          break;
-        case "support":
-          filtered = filtered.filter((u) => u.is_support);
-          break;
-        case "masteradmin":
-          filtered = filtered.filter((u) => u.is_masteradmin);
-          break;
-      }
-    }
-
-    setFilteredUsers(filtered);
     setUserPage(1);
-  }, [users, debouncedUserSearch, roleFilter]);
-
-  // Sort users
-  const sortedFilteredUsers = useMemo(() => {
-    return [...filteredUsers].sort((a, b) => {
-      let cmp = 0;
-      switch (userSortKey) {
-        case "name": cmp = (a.name || "").localeCompare(b.name || ""); break;
-        case "email": cmp = a.email.localeCompare(b.email); break;
-        case "date": cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime(); break;
-      }
-      return userSortDir === "asc" ? cmp : -cmp;
-    });
-  }, [filteredUsers, userSortKey, userSortDir]);
+  }, [debouncedUserSearch, roleFilter, userSortKey, userSortDir]);
 
   // Event status helper
   const getEventStatus = (dateStr: string) => {
@@ -284,70 +257,27 @@ export default function MasterAdminPage() {
   );
 
   useEffect(() => {
-    let filtered = events;
-
-    if (debouncedEventSearch) {
-      const query = debouncedEventSearch.toLowerCase();
-      filtered = filtered.filter(
-        (event) =>
-          event.title.toLowerCase().includes(query) ||
-          event.organizing_dept?.toLowerCase().includes(query)
-      );
-    }
-
-    // Status filter
-    if (eventStatusFilter !== "all") {
-      filtered = filtered.filter((event) => {
-        const status = getEventStatus(event.event_date).label.toLowerCase().replace(" ", "");
-        return status === eventStatusFilter;
-      });
-    }
-
-    // Sort
-    filtered = [...filtered].sort((a, b) => {
-      let cmp = 0;
-      switch (eventSortKey) {
-        case "title": cmp = a.title.localeCompare(b.title); break;
-        case "dept": cmp = (a.organizing_dept || "").localeCompare(b.organizing_dept || ""); break;
-        case "date": cmp = new Date(a.event_date).getTime() - new Date(b.event_date).getTime(); break;
-        case "registrations": cmp = (a.registration_count || 0) - (b.registration_count || 0); break;
-      }
-      return eventSortDir === "asc" ? cmp : -cmp;
-    });
-
-    setFilteredEvents(filtered);
     setEventPage(1);
-  }, [events, debouncedEventSearch, eventStatusFilter, eventSortKey, eventSortDir]);
+  }, [debouncedEventSearch, eventStatusFilter, eventSortKey, eventSortDir]);
 
   useEffect(() => {
-    let filtered = fests;
-
-    if (debouncedFestSearch) {
-      const query = debouncedFestSearch.toLowerCase();
-      filtered = filtered.filter(
-        (fest) =>
-          fest.fest_title.toLowerCase().includes(query) ||
-          fest.organizing_dept?.toLowerCase().includes(query)
-      );
-    }
-
-    setFilteredFests(filtered);
     setFestPage(1);
-  }, [fests, debouncedFestSearch]);
+  }, [debouncedFestSearch, festSortKey, festSortDir]);
 
-  // Sort fests
-  const sortedFilteredFests = useMemo(() => {
-    return [...filteredFests].sort((a, b) => {
-      let cmp = 0;
-      switch (festSortKey) {
-        case "title": cmp = a.fest_title.localeCompare(b.fest_title); break;
-        case "dept": cmp = (a.organizing_dept || "").localeCompare(b.organizing_dept || ""); break;
-        case "date": cmp = new Date(a.opening_date).getTime() - new Date(b.opening_date).getTime(); break;
-        case "registrations": cmp = (a.registration_count || 0) - (b.registration_count || 0); break;
-      }
-      return festSortDir === "asc" ? cmp : -cmp;
-    });
-  }, [filteredFests, festSortKey, festSortDir]);
+  useEffect(() => {
+    if (!isMasterAdmin || !authToken || activeTab !== "users") return;
+    fetchUsers();
+  }, [activeTab, isMasterAdmin, authToken, userPage, debouncedUserSearch, roleFilter, userSortKey, userSortDir]);
+
+  useEffect(() => {
+    if (!isMasterAdmin || !authToken || activeTab !== "events") return;
+    fetchEvents();
+  }, [activeTab, isMasterAdmin, authToken, eventPage, debouncedEventSearch, eventStatusFilter, eventSortKey, eventSortDir]);
+
+  useEffect(() => {
+    if (!isMasterAdmin || !authToken || activeTab !== "fests") return;
+    fetchFests();
+  }, [activeTab, isMasterAdmin, authToken, festPage, debouncedFestSearch, festSortKey, festSortDir]);
 
   const fetchRegistrations = async () => {
     try {
@@ -368,7 +298,12 @@ export default function MasterAdminPage() {
   const fetchDashboardData = async () => {
     try {
       setIsLoading(true);
-      await Promise.all([fetchUsers(), fetchEvents(), fetchFests(), fetchRegistrations()]);
+      await Promise.all([
+        fetchUsers({ unpaged: true }),
+        fetchEvents({ unpaged: true }),
+        fetchFests({ unpaged: true }),
+        fetchRegistrations()
+      ]);
     } catch (error) {
       console.error("Error fetching dashboard data:", error);
     } finally {
@@ -376,12 +311,52 @@ export default function MasterAdminPage() {
     }
   };
 
-  const fetchUsers = async () => {
+  const getPaginationState = (
+    pagination: any,
+    fallbackPage: number,
+    fallbackSize: number,
+    fallbackTotal: number
+  ): PaginationState => {
+    if (pagination) {
+      return {
+        page: pagination.page || fallbackPage,
+        pageSize: pagination.pageSize || fallbackSize,
+        totalItems: pagination.totalItems ?? fallbackTotal,
+        totalPages: pagination.totalPages || 1,
+        hasNext: Boolean(pagination.hasNext),
+        hasPrev: Boolean(pagination.hasPrev),
+      };
+    }
+
+    const totalPages = Math.max(Math.ceil(fallbackTotal / fallbackSize), 1);
+    return {
+      page: fallbackPage,
+      pageSize: fallbackSize,
+      totalItems: fallbackTotal,
+      totalPages,
+      hasNext: fallbackPage < totalPages,
+      hasPrev: fallbackPage > 1,
+    };
+  };
+
+  const fetchUsers = async (options?: { unpaged?: boolean }) => {
     try {
       setIsLoading(true);
       const token = await getFreshToken();
+
+      const query = new URLSearchParams();
+      if (!options?.unpaged) {
+        query.set("page", String(userPage));
+        query.set("pageSize", String(ITEMS_PER_PAGE));
+        if (debouncedUserSearch.trim()) query.set("search", debouncedUserSearch.trim());
+        if (roleFilter !== "all") query.set("role", roleFilter);
+        query.set("sortBy", userSortKey === "date" ? "created_at" : userSortKey);
+        query.set("sortOrder", userSortDir);
+      }
+
+      const url = `${API_URL}/api/users${query.toString() ? `?${query.toString()}` : ""}`;
       
-      const response = await fetch(`${API_URL}/api/users`, {
+      const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -400,7 +375,9 @@ export default function MasterAdminPage() {
       }
 
       const data = await response.json();
-      setUsers(data.users || []);
+      const nextUsers = data.users || [];
+      setUsers(nextUsers);
+      setUserPagination(getPaginationState(data.pagination, userPage, ITEMS_PER_PAGE, nextUsers.length));
     } catch (error: any) {
       console.error("Error fetching users:", error);
       toast.error(`Failed to load users: ${error.message}`);
@@ -409,53 +386,36 @@ export default function MasterAdminPage() {
     }
   };
 
-  const fetchEvents = async () => {
+  const fetchEvents = async (options?: { unpaged?: boolean }) => {
     try {
       setIsLoading(true);
       const token = await getFreshToken();
-      
-      const [eventsResponse, registrationsResponse] = await Promise.all([
-        fetch(`${API_URL}/api/events`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-        fetch(`${API_URL}/api/registrations`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        })
-      ]);
+
+      const query = new URLSearchParams();
+      if (!options?.unpaged) {
+        query.set("page", String(eventPage));
+        query.set("pageSize", String(ITEMS_PER_PAGE));
+        if (debouncedEventSearch.trim()) query.set("search", debouncedEventSearch.trim());
+        if (eventStatusFilter !== "all") query.set("status", eventStatusFilter);
+        query.set("sortBy", eventSortKey === "date" ? "event_date" : eventSortKey);
+        query.set("sortOrder", eventSortDir);
+      }
+
+      const url = `${API_URL}/api/events${query.toString() ? `?${query.toString()}` : ""}`;
+      const eventsResponse = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
       if (!eventsResponse.ok) {
         throw new Error("Failed to fetch events");
       }
 
       const data = await eventsResponse.json();
-      const eventsList = data.events || [];
-
-      // Get registration counts by event_id
-      let eventRegistrationCounts: Record<string, number> = {};
-      if (registrationsResponse.ok) {
-        const regData = await registrationsResponse.json();
-        if (regData.registrations) {
-          regData.registrations.forEach((reg: any) => {
-            if (reg.event_id) {
-              eventRegistrationCounts[reg.event_id] = (eventRegistrationCounts[reg.event_id] || 0) + 1;
-            }
-          });
-        }
-      } else {
-        toast.error("Failed to fetch registration counts");
-      }
-
-      // Add registration counts to events
-      const eventsWithCounts = eventsList.map((event: Event) => ({
-        ...event,
-        registration_count: eventRegistrationCounts[event.event_id] || 0
-      }));
-
-      setEvents(eventsWithCounts);
+      const nextEvents = data.events || [];
+      setEvents(nextEvents);
+      setEventPagination(getPaginationState(data.pagination, eventPage, ITEMS_PER_PAGE, nextEvents.length));
     } catch (error) {
       console.error("Error fetching events:", error);
       toast.error("Failed to load events");
@@ -464,64 +424,31 @@ export default function MasterAdminPage() {
     }
   };
 
-  const fetchFests = async () => {
+  const fetchFests = async (options?: { unpaged?: boolean }) => {
     try {
       setIsLoading(true);
       const token = await getFreshToken();
-      const [festsResponse, eventsResponse, registrationsResponse] = await Promise.all([
-        fetch(`${API_URL}/api/fests`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API_URL}/api/events`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API_URL}/api/registrations`, { headers: { Authorization: `Bearer ${token}` } })
-      ]);
+
+      const query = new URLSearchParams();
+      if (!options?.unpaged) {
+        query.set("page", String(festPage));
+        query.set("pageSize", String(ITEMS_PER_PAGE));
+        if (debouncedFestSearch.trim()) query.set("search", debouncedFestSearch.trim());
+        query.set("sortBy", festSortKey === "date" ? "opening_date" : festSortKey);
+        query.set("sortOrder", festSortDir);
+      }
+
+      const url = `${API_URL}/api/fests${query.toString() ? `?${query.toString()}` : ""}`;
+      const festsResponse = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
 
       if (!festsResponse.ok) {
         throw new Error("Failed to fetch fests");
       }
 
       const festsData = await festsResponse.json();
-      const festsList = festsData.fests || festsData || [];
-
-      // Get events data
-      let eventsData: any[] = [];
-      if (eventsResponse.ok) {
-        const eventsJson = await eventsResponse.json();
-        eventsData = eventsJson.events || [];
-      }
-
-      // Get registration counts by event_id
-      let eventRegistrationCounts: Record<string, number> = {};
-      if (registrationsResponse.ok) {
-        const regData = await registrationsResponse.json();
-        if (regData.registrations) {
-          regData.registrations.forEach((reg: any) => {
-            if (reg.event_id) {
-              eventRegistrationCounts[reg.event_id] = (eventRegistrationCounts[reg.event_id] || 0) + 1;
-            }
-          });
-        }
-      }
-
-      // Calculate fest registration counts: sum of all registrations for events belonging to that fest
-      const festRegistrationCounts: Record<string, number> = {};
-      eventsData.forEach((event: any) => {
-        // Match by fest NAME (the 'fest' column contains fest title, not ID)
-        if (event.fest) {
-          const eventRegCount = eventRegistrationCounts[event.event_id] || 0;
-          // Find fest by matching title
-          const matchingFest = festsList.find((f: any) => f.fest_title === event.fest);
-          if (matchingFest) {
-            festRegistrationCounts[matchingFest.fest_id] = (festRegistrationCounts[matchingFest.fest_id] || 0) + eventRegCount;
-          }
-        }
-      });
-
-      // Add registration counts to fests
-      const festsWithCounts = festsList.map((fest: Fest) => ({
-        ...fest,
-        registration_count: festRegistrationCounts[fest.fest_id] || 0
-      }));
-
-      setFests(festsWithCounts);
+      const nextFests = festsData.fests || festsData || [];
+      setFests(nextFests);
+      setFestPagination(getPaginationState(festsData.pagination, festPage, ITEMS_PER_PAGE, nextFests.length));
     } catch (error) {
       console.error("Error fetching fests:", error);
       toast.error("Failed to load fests");
@@ -633,7 +560,7 @@ export default function MasterAdminPage() {
         throw new Error(error.error || "Failed to delete user");
       }
 
-      setUsers((prev) => prev.filter((u) => u.email !== email));
+      await fetchUsers();
       setShowDeleteUserConfirm(null);
       toast.success("User deleted successfully");
     } catch (error: any) {
@@ -657,7 +584,7 @@ export default function MasterAdminPage() {
         throw new Error(error.error || "Failed to delete event");
       }
 
-      setEvents((prev) => prev.filter((e) => e.event_id !== eventId));
+      await fetchEvents();
       setShowDeleteEventConfirm(null);
       toast.success("Event deleted successfully");
     } catch (error: any) {
@@ -681,25 +608,13 @@ export default function MasterAdminPage() {
         throw new Error(error.error || "Failed to delete fest");
       }
 
-      setFests((prev) => prev.filter((f) => f.fest_id !== festId));
+      await fetchFests();
       setShowDeleteFestConfirm(null);
       toast.success("Fest deleted successfully");
     } catch (error: any) {
       console.error("Error deleting fest:", error);
       toast.error(error.message || "Failed to delete fest");
     }
-  };
-
-  // Pagination helpers
-  const paginateArray = <T,>(array: T[], page: number) => {
-    const start = (page - 1) * ITEMS_PER_PAGE;
-    const end = start + ITEMS_PER_PAGE;
-    return {
-      items: array.slice(start, end),
-      totalPages: Math.ceil(array.length / ITEMS_PER_PAGE),
-      hasNext: end < array.length,
-      hasPrev: page > 1
-    };
   };
 
   const PaginationControls = ({ 
@@ -753,10 +668,6 @@ export default function MasterAdminPage() {
     </div>
   );
 
-  const paginatedUsers = paginateArray(sortedFilteredUsers, userPage);
-  const paginatedEvents = paginateArray(filteredEvents, eventPage);
-  const paginatedFests = paginateArray(sortedFilteredFests, festPage);
-
   if (authLoading || !authToken) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -775,9 +686,9 @@ export default function MasterAdminPage() {
   // ── Sidebar nav config ──
   const sidebarNav = [
     { id: "dashboard" as const, label: "Dashboard", icon: <LayoutDashboard className="w-4 h-4" /> },
-    { id: "users" as const, label: "Users", icon: <Users className="w-4 h-4" />, count: users.length },
-    { id: "events" as const, label: "Events", icon: <CalendarDays className="w-4 h-4" />, count: events.length },
-    { id: "fests" as const, label: "Fests", icon: <Trophy className="w-4 h-4" />, count: fests.length },
+    { id: "users" as const, label: "Users", icon: <Users className="w-4 h-4" />, count: userPagination.totalItems },
+    { id: "events" as const, label: "Events", icon: <CalendarDays className="w-4 h-4" />, count: eventPagination.totalItems },
+    { id: "fests" as const, label: "Fests", icon: <Trophy className="w-4 h-4" />, count: festPagination.totalItems },
     { id: "notifications" as const, label: "Notifications", icon: <Bell className="w-4 h-4" /> },
     { id: "report" as const, label: "Reports", icon: <BarChart2 className="w-4 h-4" /> },
     { id: "settings" as const, label: "Settings", icon: <Settings className="w-4 h-4" /> },
@@ -915,17 +826,17 @@ export default function MasterAdminPage() {
                     onChange={(e) => setRoleFilter(e.target.value)}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#154CB3] focus:border-[#154CB3] transition-all"
                   >
-                    <option value="all">All Users ({users.length})</option>
-                    <option value="organiser">Organisers ({users.filter((u) => u.is_organiser).length})</option>
-                    <option value="support">Support ({users.filter((u) => u.is_support).length})</option>
-                    <option value="masteradmin">Master Admins ({users.filter((u) => u.is_masteradmin).length})</option>
+                    <option value="all">All Users</option>
+                    <option value="organiser">Organisers</option>
+                    <option value="support">Support</option>
+                    <option value="masteradmin">Master Admins</option>
                   </select>
                 </div>
               </div>
               {/* Result summary */}
               <div className="mt-3 text-sm text-gray-500">
-                Showing <strong className="text-gray-700">{sortedFilteredUsers.length}</strong> of{" "}
-                <strong className="text-gray-700">{users.length}</strong> users
+                Showing <strong className="text-gray-700">{users.length}</strong> of{" "}
+                <strong className="text-gray-700">{userPagination.totalItems}</strong> users
               </div>
             </div>
 
@@ -936,7 +847,7 @@ export default function MasterAdminPage() {
                   <div className="w-12 h-12 border-4 border-[#154CB3] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                   <div className="text-gray-600">Loading users...</div>
                 </div>
-              ) : paginatedUsers.items.length === 0 ? (
+              ) : users.length === 0 ? (
                 <div className="p-12 text-center">
                   <div className="text-xl font-semibold text-gray-700 mb-2">No users found</div>
                   <div className="text-gray-500">Try adjusting your search or filter</div>
@@ -974,7 +885,7 @@ export default function MasterAdminPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
-                        {paginatedUsers.items.map((user) => {
+                        {users.map((user) => {
                           const isEditing = editingUserId === user.id;
                           const displayRoles = isEditing ? editingUserRoles : user;
 
@@ -1137,11 +1048,12 @@ export default function MasterAdminPage() {
                   </div>
                   <PaginationControls
                     currentPage={userPage}
-                    totalPages={paginatedUsers.totalPages}
-                    hasNext={paginatedUsers.hasNext}
-                    hasPrev={paginatedUsers.hasPrev}
+                    totalPages={userPagination.totalPages}
+                    hasNext={userPagination.hasNext}
+                    hasPrev={userPagination.hasPrev}
                     onNext={() => setUserPage(p => p + 1)}
                     onPrev={() => setUserPage(p => p - 1)}
+                    totalItems={userPagination.totalItems}
                   />
                 </>
               )}
@@ -1173,19 +1085,19 @@ export default function MasterAdminPage() {
                     onChange={(e) => setEventStatusFilter(e.target.value as any)}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#154CB3] focus:border-[#154CB3] transition-all"
                   >
-                    <option value="all">All Events ({events.length})</option>
-                    <option value="live">Live ({events.filter(e => getEventStatus(e.event_date).label === "Live").length})</option>
-                    <option value="thisweek">This Week ({events.filter(e => getEventStatus(e.event_date).label === "This Week").length})</option>
-                    <option value="upcoming">Upcoming ({events.filter(e => getEventStatus(e.event_date).label === "Upcoming").length})</option>
-                    <option value="past">Past ({events.filter(e => getEventStatus(e.event_date).label === "Past").length})</option>
+                    <option value="all">All Events</option>
+                    <option value="live">Live</option>
+                    <option value="thisweek">This Week</option>
+                    <option value="upcoming">Upcoming</option>
+                    <option value="past">Past</option>
                   </select>
                 </div>
               </div>
               {/* Result summary */}
               <div className="mt-3 flex items-center justify-between text-sm text-gray-500">
                 <span>
-                  Showing <strong className="text-gray-700">{filteredEvents.length}</strong> of{" "}
-                  <strong className="text-gray-700">{events.length}</strong> events
+                  Showing <strong className="text-gray-700">{events.length}</strong> of{" "}
+                  <strong className="text-gray-700">{eventPagination.totalItems}</strong> events
                   {eventStatusFilter !== "all" && (
                     <button onClick={() => setEventStatusFilter("all")} className="ml-2 text-[#154CB3] hover:underline">
                       Clear filter
@@ -1204,7 +1116,7 @@ export default function MasterAdminPage() {
                   <div className="w-12 h-12 border-4 border-[#154CB3] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                   <div className="text-gray-600">Loading events...</div>
                 </div>
-              ) : paginatedEvents.items.length === 0 ? (
+              ) : events.length === 0 ? (
                 <div className="p-12 text-center">
                   <div className="text-xl font-semibold text-gray-700 mb-2">No events found</div>
                   <div className="text-gray-500">Try adjusting your search or filter</div>
@@ -1245,7 +1157,7 @@ export default function MasterAdminPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
-                        {paginatedEvents.items.map((event) => {
+                        {events.map((event) => {
                           const status = getEventStatus(event.event_date);
                           return (
                             <tr key={event.event_id} className="hover:bg-gray-50 transition-all duration-200">
@@ -1303,11 +1215,12 @@ export default function MasterAdminPage() {
                   </div>
                   <PaginationControls
                     currentPage={eventPage}
-                    totalPages={paginatedEvents.totalPages}
-                    hasNext={paginatedEvents.hasNext}
-                    hasPrev={paginatedEvents.hasPrev}
+                    totalPages={eventPagination.totalPages}
+                    hasNext={eventPagination.hasNext}
+                    hasPrev={eventPagination.hasPrev}
                     onNext={() => setEventPage(p => p + 1)}
                     onPrev={() => setEventPage(p => p - 1)}
+                    totalItems={eventPagination.totalItems}
                   />
                 </>
               )}
@@ -1329,8 +1242,8 @@ export default function MasterAdminPage() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#154CB3] focus:border-[#154CB3] transition-all"
               />
               <div className="mt-3 text-sm text-gray-500">
-                Showing <strong className="text-gray-700">{sortedFilteredFests.length}</strong> of{" "}
-                <strong className="text-gray-700">{fests.length}</strong> fests
+                Showing <strong className="text-gray-700">{fests.length}</strong> of{" "}
+                <strong className="text-gray-700">{festPagination.totalItems}</strong> fests
               </div>
             </div>
 
@@ -1340,7 +1253,7 @@ export default function MasterAdminPage() {
                   <div className="w-12 h-12 border-4 border-[#154CB3] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                   <div className="text-gray-600">Loading fests...</div>
                 </div>
-              ) : paginatedFests.items.length === 0 ? (
+              ) : fests.length === 0 ? (
                 <div className="p-12 text-center">
                   <div className="text-xl font-semibold text-gray-700 mb-2">No fests found</div>
                   <div className="text-gray-500">Try adjusting your search</div>
@@ -1380,7 +1293,7 @@ export default function MasterAdminPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
-                        {paginatedFests.items.map((fest) => (
+                        {fests.map((fest) => (
                           <tr key={fest.fest_id} className="hover:bg-gray-50 transition-all duration-200">
                             <td className="px-6 py-4">
                               <div className="font-semibold text-gray-900">{fest.fest_title}</div>
@@ -1430,11 +1343,12 @@ export default function MasterAdminPage() {
                   </div>
                   <PaginationControls
                     currentPage={festPage}
-                    totalPages={paginatedFests.totalPages}
-                    hasNext={paginatedFests.hasNext}
-                    hasPrev={paginatedFests.hasPrev}
+                    totalPages={festPagination.totalPages}
+                    hasNext={festPagination.hasNext}
+                    hasPrev={festPagination.hasPrev}
                     onNext={() => setFestPage(p => p + 1)}
                     onPrev={() => setFestPage(p => p - 1)}
+                    totalItems={festPagination.totalItems}
                   />
                 </>
               )}

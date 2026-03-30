@@ -1,6 +1,7 @@
 import express from "express";
 import { queryAll, queryOne, supabase } from "../config/database.js";
 import { authenticateUser, getUserInfo, checkRoleExpiration } from "../middleware/authMiddleware.js";
+import { getFestTableForSupabase } from "../utils/festTableResolver.js";
 
 const router = express.Router();
 
@@ -66,6 +67,7 @@ router.post("/report/data", (req, res, next) => {
 }, async (req, res) => {
   try {
     const { eventIds, festId } = req.body;
+    const festTable = await getFestTableForSupabase(supabase);
     const userEmail = req.userInfo?.email;
     const isMasterAdmin = req.userInfo?.is_masteradmin;
 
@@ -87,7 +89,7 @@ router.post("/report/data", (req, res, next) => {
     let festTitle = null;
     if (festId) {
       const { data: festLookup } = await supabase
-        .from('fests')
+        .from(festTable)
         .select('fest_title, created_by')
         .eq('fest_id', festId)
         .single();
@@ -114,7 +116,7 @@ router.post("/report/data", (req, res, next) => {
       // If festId provided, verify organiser owns that fest
       if (festId) {
         const { data: fest } = await supabase
-          .from('fests')
+          .from(festTable)
           .select('created_by')
           .eq('fest_id', festId)
           .single();
@@ -231,7 +233,7 @@ router.post("/report/data", (req, res, next) => {
     let festInfo = null;
     if (festId) {
       const { data: fest } = await supabase
-        .from('fests')
+        .from(festTable)
         .select('*')
         .eq('fest_id', festId)
         .single();

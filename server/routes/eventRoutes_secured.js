@@ -43,19 +43,113 @@ const normalizeJsonField = (value) => {
 // GET all events - PUBLIC ACCESS (no auth required)
 router.get("/", async (req, res) => {
   try {
+    const { page, pageSize, search, status, sortBy, sortOrder } = req.query;
     const events = await queryAll("events", { order: { column: "created_at", ascending: false } });
 
+    // Build registration counts once so both sorting and UI display use the same value.
+    const registrations = await queryAll("registrations", { select: "event_id" });
+    const eventRegistrationCounts = {};
+    (registrations || []).forEach((reg) => {
+      if (reg.event_id) {
+        eventRegistrationCounts[reg.event_id] = (eventRegistrationCounts[reg.event_id] || 0) + 1;
+      }
+    });
+
     // Parse JSON fields for each event
-    const processedEvents = events.map(event => ({
+    let processedEvents = events.map(event => ({
       ...event,
       department_access: normalizeJsonField(event.department_access),
       rules: normalizeJsonField(event.rules),
       schedule: normalizeJsonField(event.schedule),
       prizes: normalizeJsonField(event.prizes),
-      custom_fields: normalizeJsonField(event.custom_fields)
+      custom_fields: normalizeJsonField(event.custom_fields),
+      registration_count: eventRegistrationCounts[event.event_id] || 0
     }));
 
-    return res.status(200).json({ events: processedEvents });
+    const normalizedSearch = typeof search === "string" ? search.trim().toLowerCase() : "";
+    if (normalizedSearch) {
+      processedEvents = processedEvents.filter((event) =>
+        event.title?.toLowerCase().includes(normalizedSearch) ||
+        event.organizing_dept?.toLowerCase().includes(normalizedSearch)
+      );
+    }
+
+    const normalizedStatus = typeof status === "string" ? status.toLowerCase() : "all";
+    if (normalizedStatus !== "all") {
+      const now = new Date();
+      processedEvents = processedEvents.filter((event) => {
+        const eventDate = new Date(event.event_date);
+        const diffDays = (eventDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+        if (normalizedStatus === "past") return diffDays < -1;
+        if (normalizedStatus === "live") return Math.abs(diffDays) <= 1;
+        if (normalizedStatus === "thisweek") return diffDays > 1 && diffDays <= 7;
+        if (normalizedStatus === "upcoming") return diffDays > 7;
+        return true;
+      });
+    }
+
+    const normalizedSortBy = typeof sortBy === "string" ? sortBy : "date";
+    const normalizedSortOrder = sortOrder === "asc" ? "asc" : "desc";
+    processedEvents.sort((a, b) => {
+      let result = 0;
+      switch (normalizedSortBy) {
+        case "title":
+          result = (a.title || "").localeCompare(b.title || "");
+          break;
+        case "dept":
+        case "organizing_dept":
+          result = (a.organizing_dept || "").localeCompare(b.organizing_dept || "");
+          break;
+        case "registrations":
+        case "registration_count":
+          result = (a.registration_count || 0) - (b.registration_count || 0);
+          break;
+        case "date":
+        case "event_date":
+          result = new Date(a.event_date || 0).getTime() - new Date(b.event_date || 0).getTime();
+          break;
+        case "created_at":
+          result = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+          break;
+        default:
+          result = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+          break;
+      }
+      return normalizedSortOrder === "asc" ? result : -result;
+    });
+
+    const shouldPaginate = page !== undefined || pageSize !== undefined;
+    if (!shouldPaginate) {
+      return res.status(200).json({ events: processedEvents });
+    }
+
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const parsedPageSize = Math.min(Math.max(parseInt(pageSize, 10) || 20, 1), 200);
+    const totalItems = processedEvents.length;
+    const totalPages = Math.max(Math.ceil(totalItems / parsedPageSize), 1);
+    const safePage = Math.min(parsedPage, totalPages);
+    const start = (safePage - 1) * parsedPageSize;
+    const pagedEvents = processedEvents.slice(start, start + parsedPageSize);
+
+    return res.status(200).json({
+      events: pagedEvents,
+      pagination: {
+        page: safePage,
+        pageSize: parsedPageSize,
+        totalItems,
+        totalPages,
+        hasNext: safePage < totalPages,
+        hasPrev: safePage > 1
+      },
+      filters: {
+        search: normalizedSearch,
+        status: normalizedStatus
+      },
+      sort: {
+        by: normalizedSortBy,
+        order: normalizedSortOrder
+      }
+    });
   } catch (error) {
     console.error("Server error GET /api/events:", error);
     return res.status(500).json({ error: "Internal server error while fetching events." });

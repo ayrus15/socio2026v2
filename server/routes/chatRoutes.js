@@ -2,6 +2,7 @@ import express from "express";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@supabase/supabase-js";
 import { authenticateUser } from "../middleware/authMiddleware.js";
+import { getFestTableForSupabase } from "../utils/festTableResolver.js";
 
 const router = express.Router();
 
@@ -111,6 +112,11 @@ router.post("/", authenticateUser, async (req, res) => {
 
     if (sb) {
       try {
+        let festTable = null;
+        if (sb) {
+          festTable = await getFestTableForSupabase(sb);
+        }
+
         // If on a specific event page, fetch that event
         if (currentPage.startsWith("/event/")) {
           const eventId = currentPage.split("/event/")[1];
@@ -132,7 +138,7 @@ router.post("/", authenticateUser, async (req, res) => {
           const festId = currentPage.split("/fest/")[1];
           if (festId) {
             const { data: fest } = await sb
-              .from("fests")
+              .from(festTable || "fests")
               .select("*")
               .eq("fest_id", festId)
               .single();
@@ -168,6 +174,7 @@ router.post("/", authenticateUser, async (req, res) => {
     let platformContext = "No platform data available.";
     if (sb) {
       try {
+        const festTable = await getFestTableForSupabase(sb);
         const { data: events } = await sb
           .from("events")
           .select("title, event_date, venue, organizing_dept, category")
@@ -176,7 +183,7 @@ router.post("/", authenticateUser, async (req, res) => {
           .limit(10);
 
         const { data: fests } = await sb
-          .from("fests")
+          .from(festTable)
           .select("fest_title, opening_date, closing_date, venue")
           .gte("closing_date", new Date().toISOString())
           .limit(5);

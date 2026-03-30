@@ -201,6 +201,25 @@ export const requireMasterAdmin = (req, res, next) => {
 export const requireOwnership = (table, paramName, ownerField = 'auth_uuid') => {
   return async (req, res, next) => {
     try {
+      const resolveResource = async (tableName, whereClause) => {
+        const isMissingRelationError = (error) => {
+          const message = String(error?.message || '').toLowerCase();
+          return error?.code === '42P01' || (message.includes('relation') && message.includes('does not exist'));
+        };
+
+        try {
+          return await queryOne(tableName, { where: whereClause });
+        } catch (error) {
+          const canFallbackFestTable = (tableName === 'fest' || tableName === 'fests') && isMissingRelationError(error);
+          if (!canFallbackFestTable) {
+            throw error;
+          }
+
+          const fallbackTable = tableName === 'fest' ? 'fests' : 'fest';
+          return await queryOne(fallbackTable, { where: whereClause });
+        }
+      };
+
       // Master admin bypass - can access any resource
       if (req.userInfo?.is_masteradmin) {
         console.log(`[Ownership] ✅ BYPASSED for master admin: ${req.userInfo.email}`);
@@ -215,7 +234,7 @@ export const requireOwnership = (table, paramName, ownerField = 'auth_uuid') => 
         const dbColumnName = columnMapping[paramName] || paramName;
         
         try {
-          const resource = await queryOne(table, { where: { [dbColumnName]: resourceId } });
+          const resource = await resolveResource(table, { [dbColumnName]: resourceId });
           if (resource) {
             req.resource = resource;
           }
@@ -248,7 +267,7 @@ export const requireOwnership = (table, paramName, ownerField = 'auth_uuid') => 
       // Query the resource using the correct database column name
       let resource;
       try {
-        resource = await queryOne(table, { where: { [dbColumnName]: resourceId } });
+        resource = await resolveResource(table, { [dbColumnName]: resourceId });
       } catch (queryError) {
         console.error('[Ownership] Database query failed:', {
           error: queryError.message,

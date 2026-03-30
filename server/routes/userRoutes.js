@@ -10,6 +10,7 @@ import {
   optionalAuth
 } from "../middleware/authMiddleware.js";
 import { sendWelcomeEmail } from "../utils/emailService.js";
+import { getFestTableForDatabase } from "../utils/festTableResolver.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -43,21 +44,21 @@ router.get("/", (req, res, next) => {
   });
 }, async (req, res) => {
   try {
-    const { search, role } = req.query;
+    const { search, role, page, pageSize, sortBy, sortOrder } = req.query;
     
     let users = await queryAll("users");
     
     // Apply search filter (email or name)
-    if (search) {
-      const searchLower = search.toLowerCase();
+    const normalizedSearch = typeof search === 'string' ? search.trim().toLowerCase() : '';
+    if (normalizedSearch) {
       users = users.filter(user => 
-        user.email?.toLowerCase().includes(searchLower) ||
-        user.name?.toLowerCase().includes(searchLower)
+        user.email?.toLowerCase().includes(normalizedSearch) ||
+        user.name?.toLowerCase().includes(normalizedSearch)
       );
     }
     
     // Apply role filter
-    if (role) {
+    if (typeof role === 'string' && role !== 'all') {
       switch (role) {
         case 'organiser':
           users = users.filter(user => user.is_organiser);
@@ -70,8 +71,60 @@ router.get("/", (req, res, next) => {
           break;
       }
     }
+
+    // Apply server-side sorting
+    const normalizedSortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
+    const normalizedSortBy = typeof sortBy === 'string' ? sortBy : 'date';
+    users.sort((a, b) => {
+      let result = 0;
+      switch (normalizedSortBy) {
+        case 'name':
+          result = (a.name || '').localeCompare(b.name || '');
+          break;
+        case 'email':
+          result = (a.email || '').localeCompare(b.email || '');
+          break;
+        case 'date':
+        case 'created_at':
+        default:
+          result = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+          break;
+      }
+      return normalizedSortOrder === 'asc' ? result : -result;
+    });
+
+    const shouldPaginate = page !== undefined || pageSize !== undefined;
+    if (!shouldPaginate) {
+      return res.status(200).json({ users });
+    }
+
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const parsedPageSize = Math.min(Math.max(parseInt(pageSize, 10) || 20, 1), 200);
+    const totalItems = users.length;
+    const totalPages = Math.max(Math.ceil(totalItems / parsedPageSize), 1);
+    const safePage = Math.min(parsedPage, totalPages);
+    const start = (safePage - 1) * parsedPageSize;
+    const pagedUsers = users.slice(start, start + parsedPageSize);
     
-    return res.status(200).json({ users });
+    return res.status(200).json({
+      users: pagedUsers,
+      pagination: {
+        page: safePage,
+        pageSize: parsedPageSize,
+        totalItems,
+        totalPages,
+        hasNext: safePage < totalPages,
+        hasPrev: safePage > 1
+      },
+      filters: {
+        search: normalizedSearch,
+        role: typeof role === 'string' ? role : 'all'
+      },
+      sort: {
+        by: normalizedSortBy,
+        order: normalizedSortOrder
+      }
+    });
   } catch (error) {
     console.error("Error fetching users:", error);
     return res.status(500).json({ error: "Internal server error" });
@@ -450,7 +503,8 @@ router.post("/", async (req, res) => {
     // 2. Check if user was pre-added as event head (non-blocking)
     (async () => {
       try {
-        const allFests = await queryAll('fests');
+        const festTable = await getFestTableForDatabase(queryAll);
+        const allFests = await queryAll(festTable);
         for (const fest of allFests || []) {
           const eventHeads = fest.event_heads || [];
           const matchingHead = eventHeads.find((head) => 

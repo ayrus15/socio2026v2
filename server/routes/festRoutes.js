@@ -11,6 +11,7 @@ import {
 } from "../middleware/authMiddleware.js";
 import { sendBroadcastNotification } from "./notificationRoutes.js";
 import { pushFestToGated, isGatedEnabled } from "../utils/gatedSync.js";
+import { getFestTableForDatabase } from "../utils/festTableResolver.js";
 
 const router = express.Router();
 
@@ -53,17 +54,112 @@ const mapFestResponse = (fest) => {
 // GET all fests
 router.get("/", async (req, res) => {
   try {
+    const { page, pageSize, search, sortBy, sortOrder } = req.query;
+    const festTable = await getFestTableForDatabase(queryAll);
     console.log("Fetching all fests...");
-    const fests = await queryAll("fests", {
+    const fests = await queryAll(festTable, {
       order: { column: "created_at", ascending: false }
+    });
+
+    const events = await queryAll("events", { select: "event_id, fest" });
+    const registrations = await queryAll("registrations", { select: "event_id" });
+
+    const eventRegistrationCounts = {};
+    (registrations || []).forEach((reg) => {
+      if (reg.event_id) {
+        eventRegistrationCounts[reg.event_id] = (eventRegistrationCounts[reg.event_id] || 0) + 1;
+      }
     });
 
     console.log(`Found ${fests?.length || 0} fests`);
 
-    const processedFests = (fests || []).map(mapFestResponse);
+    const festTitleToId = new Map((fests || []).map((fest) => [fest.fest_title, fest.fest_id]));
+    const festRegistrationCounts = {};
+    (events || []).forEach((event) => {
+      if (!event.fest) return;
+      const matchedFestId = festTitleToId.get(event.fest) || event.fest;
+      const eventCount = eventRegistrationCounts[event.event_id] || 0;
+      festRegistrationCounts[matchedFestId] = (festRegistrationCounts[matchedFestId] || 0) + eventCount;
+    });
+
+    let processedFests = (fests || []).map((fest) => ({
+      ...mapFestResponse(fest),
+      registration_count: festRegistrationCounts[fest.fest_id] || 0
+    }));
+
+    const normalizedSearch = typeof search === "string" ? search.trim().toLowerCase() : "";
+    if (normalizedSearch) {
+      processedFests = processedFests.filter((fest) =>
+        fest.fest_title?.toLowerCase().includes(normalizedSearch) ||
+        fest.organizing_dept?.toLowerCase().includes(normalizedSearch)
+      );
+    }
+
+    const normalizedSortBy = typeof sortBy === "string" ? sortBy : "date";
+    const normalizedSortOrder = sortOrder === "asc" ? "asc" : "desc";
+    processedFests.sort((a, b) => {
+      let result = 0;
+      switch (normalizedSortBy) {
+        case "title":
+          result = (a.fest_title || "").localeCompare(b.fest_title || "");
+          break;
+        case "dept":
+        case "organizing_dept":
+          result = (a.organizing_dept || "").localeCompare(b.organizing_dept || "");
+          break;
+        case "registrations":
+        case "registration_count":
+          result = (a.registration_count || 0) - (b.registration_count || 0);
+          break;
+        case "date":
+        case "opening_date":
+          result = new Date(a.opening_date || 0).getTime() - new Date(b.opening_date || 0).getTime();
+          break;
+        case "created_at":
+          result = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+          break;
+        default:
+          result = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+          break;
+      }
+      return normalizedSortOrder === "asc" ? result : -result;
+    });
+
+    const shouldPaginate = page !== undefined || pageSize !== undefined;
+    if (!shouldPaginate) {
+      // OPTIMIZATION: Cache for 5 minutes, allow stale content for 1 hour
+      res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=3600');
+      return res.status(200).json({ fests: processedFests });
+    }
+
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const parsedPageSize = Math.min(Math.max(parseInt(pageSize, 10) || 20, 1), 200);
+    const totalItems = processedFests.length;
+    const totalPages = Math.max(Math.ceil(totalItems / parsedPageSize), 1);
+    const safePage = Math.min(parsedPage, totalPages);
+    const start = (safePage - 1) * parsedPageSize;
+    const pagedFests = processedFests.slice(start, start + parsedPageSize);
+
     // OPTIMIZATION: Cache for 5 minutes, allow stale content for 1 hour
     res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=3600');
-    return res.status(200).json({ fests: processedFests });
+    return res.status(200).json({
+      fests: pagedFests,
+      pagination: {
+        page: safePage,
+        pageSize: parsedPageSize,
+        totalItems,
+        totalPages,
+        hasNext: safePage < totalPages,
+        hasPrev: safePage > 1
+      },
+      filters: {
+        search: normalizedSearch
+      },
+      sort: {
+        by: normalizedSortBy,
+        order: normalizedSortOrder
+      }
+    });
   } catch (error) {
     console.error("Error fetching fests:", error);
     console.error("Error details:", error.message, error.stack);
@@ -77,6 +173,7 @@ router.get("/", async (req, res) => {
 // GET specific fest by ID
 router.get("/:festId", async (req, res) => {
   try {
+    const festTable = await getFestTableForDatabase(queryAll);
     const { festId: festSlug } = req.params;
     if (!festSlug || typeof festSlug !== "string" || festSlug.trim() === "") {
       return res.status(400).json({
@@ -84,7 +181,7 @@ router.get("/:festId", async (req, res) => {
       });
     }
 
-    const fest = await queryOne("fests", { where: { fest_id: festSlug } });
+    const fest = await queryOne(festTable, { where: { fest_id: festSlug } });
 
     if (!fest) {
       return res.status(404).json({ error: `Fest with ID (slug) '${festSlug}' not found.` });
@@ -107,6 +204,7 @@ router.post(
   requireOrganiser,
   async (req, res) => {
     try {
+      const festTable = await getFestTableForDatabase(queryAll);
       const festData = req.body;
 
       // Basic validation
@@ -134,7 +232,7 @@ router.post(
       }
 
       // Validate fest_id uniqueness
-      const existingFest = await queryOne("fests", { where: { fest_id } });
+      const existingFest = await queryOne(festTable, { where: { fest_id } });
       if (existingFest) {
         return res.status(400).json({
           error: `A fest with the title "${title}" already exists (ID: '${fest_id}'). Please use a different title.`
@@ -170,7 +268,7 @@ router.post(
         allow_outsiders: festData.allow_outsiders === true || festData.allow_outsiders === 'true' || festData.allowOutsiders === true || festData.allowOutsiders === 'true' ? true : false,
       };
 
-      const inserted = await insert("fests", [festPayload]);
+      const inserted = await insert(festTable, [festPayload]);
       const createdFest = inserted?.[0];
 
       // Grant organiser access to event heads with expiration dates
@@ -244,6 +342,7 @@ router.put(
   requireOwnership('fest', 'festId', 'auth_uuid'),  // Master admin bypass built-in
   async (req, res) => {
     try {
+      const festTable = await getFestTableForDatabase(queryAll);
       const { festId } = req.params;
       const updateData = req.body;
       const existingFest = req.resource; // From ownership middleware
@@ -309,7 +408,7 @@ router.put(
         } catch (eventsError) { }
       }
 
-      const updated = await update("fests", updatePayload, { fest_id: festId });
+      const updated = await update(festTable, updatePayload, { fest_id: festId });
       const updatedFest = updated?.[0];
 
       // Push to UniversityGated if outsiders are now enabled (non-blocking)
@@ -374,6 +473,7 @@ router.delete(
   requireOwnership('fest', 'festId', 'auth_uuid'),  // Master admin bypass built-in
   async (req, res) => {
     try {
+      const festTable = await getFestTableForDatabase(queryAll);
       const { festId } = req.params;
       const existingFest = req.resource; // From ownership middleware
 
@@ -389,7 +489,7 @@ router.delete(
       }
 
       // Delete the fest
-      const deleted = await remove("fests", { fest_id: festId });
+      const deleted = await remove(festTable, { fest_id: festId });
       if (!deleted || deleted.length === 0) {
         return res.status(404).json({ error: "Fest not found" });
       }
