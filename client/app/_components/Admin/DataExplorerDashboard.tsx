@@ -18,6 +18,7 @@ import {
 import {
   CalendarRange,
   Download,
+  FileSpreadsheet,
   Filter,
   Loader2,
   RefreshCw,
@@ -26,6 +27,7 @@ import {
   Table2,
   TrendingUp,
 } from "lucide-react";
+import ExcelJS from "exceljs";
 import {
   fetchAdminAnalyticsDataset,
   type AnalyticsDataset,
@@ -81,6 +83,18 @@ type MultiSelectFilterProps = {
   onChange: (next: string[]) => void;
 };
 
+type DetailedExportColumn = {
+  header: string;
+  width: number;
+  kind: "text" | "number" | "currency" | "status" | "ticket";
+  value: (row: ExplorerRow) => string | number;
+};
+
+type ExportSummarySection = {
+  title: string;
+  rows: Array<{ label: string; value: string | number }>;
+};
+
 const CHART_COLORS = ["#0f4c81", "#0ea5a4", "#f59e0b", "#ef4444", "#8b5cf6", "#16a34a", "#0ea5e9", "#f97316"];
 const DOT_COLOR_CLASSES = [
   "bg-[#0f4c81]",
@@ -92,6 +106,9 @@ const DOT_COLOR_CLASSES = [
   "bg-[#0ea5e9]",
   "bg-[#f97316]",
 ];
+const PRIMARY_ARGB = "FF0F4C81";
+const SURFACE_ARGB = "FFF8FAFC";
+const STRIPED_ROW_ARGB = "FFF6FAFF";
 
 function toDate(value: string | null | undefined): Date | null {
   if (!value) return null;
@@ -132,6 +149,61 @@ function toCurrency(value: number): string {
   return `INR ${Math.round(value).toLocaleString()}`;
 }
 
+function formatDate(value: string | null): string {
+  if (!value) return "";
+  const parsed = toDate(value);
+  return parsed ? parsed.toLocaleDateString("en-GB") : "";
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "";
+  const parsed = toDate(value);
+  return parsed ? parsed.toLocaleString("en-GB") : "";
+}
+
+function formatFilterSelection(values: string[]): string {
+  return values.length > 0 ? values.join(", ") : "All";
+}
+
+function getExcelColumnLabel(index: number): string {
+  let value = index;
+  let output = "";
+
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    output = String.fromCharCode(65 + remainder) + output;
+    value = Math.floor((value - 1) / 26);
+  }
+
+  return output;
+}
+
+function getAttendanceCellStyle(status: string): { fill: string; text: string } {
+  switch (status.toLowerCase()) {
+    case "attended":
+      return { fill: "FFDCFCE7", text: "FF166534" };
+    case "absent":
+      return { fill: "FFFEE2E2", text: "FFB91C1C" };
+    case "pending":
+      return { fill: "FFFEF3C7", text: "FF92400E" };
+    default:
+      return { fill: "FFE2E8F0", text: "FF475569" };
+  }
+}
+
+function getTicketTypeCellStyle(ticketType: string): { fill: string; text: string } {
+  switch (ticketType.toLowerCase()) {
+    case "outsider":
+      return { fill: "FFFEF3C7", text: "FF92400E" };
+    case "team":
+      return { fill: "FFCCFBF1", text: "FF0F766E" };
+    case "individual":
+      return { fill: "FFDBEAFE", text: "FF1D4ED8" };
+    default:
+      return { fill: "FFE2E8F0", text: "FF475569" };
+  }
+}
+
 function exportCsv(filename: string, headers: string[], rows: Array<Array<string | number>>): void {
   const escapedRows = rows.map((row) =>
     row
@@ -145,6 +217,178 @@ function exportCsv(filename: string, headers: string[], rows: Array<Array<string
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = `${filename}_${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+async function exportDetailedXlsx(
+  filename: string,
+  columns: DetailedExportColumn[],
+  rows: ExplorerRow[],
+  summarySections: ExportSummarySection[]
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "SOCIO Master Admin";
+  workbook.created = new Date();
+
+  const summarySheet = workbook.addWorksheet("Summary");
+  summarySheet.columns = [
+    { header: "Metric", key: "metric", width: 34 },
+    { header: "Value", key: "value", width: 70 },
+  ];
+
+  summarySheet.mergeCells("A1:B1");
+  const titleCell = summarySheet.getCell("A1");
+  titleCell.value = "Data Explorer Detailed Export";
+  titleCell.font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
+  titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: PRIMARY_ARGB } };
+  titleCell.alignment = { horizontal: "left", vertical: "middle" };
+  summarySheet.getRow(1).height = 24;
+
+  const subtitleCell = summarySheet.getCell("A2");
+  subtitleCell.value = "Structured by sections: metadata, filters, and KPI snapshot.";
+  subtitleCell.font = { italic: true, color: { argb: "FF64748B" } };
+
+  let writeRow = 4;
+
+  summarySections.forEach((section) => {
+    summarySheet.mergeCells(`A${writeRow}:B${writeRow}`);
+    const sectionTitle = summarySheet.getCell(`A${writeRow}`);
+    sectionTitle.value = section.title;
+    sectionTitle.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    sectionTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0C3D67" } };
+    sectionTitle.alignment = { horizontal: "left", vertical: "middle" };
+    summarySheet.getRow(writeRow).height = 20;
+    writeRow += 1;
+
+    const sectionHeader = summarySheet.getRow(writeRow);
+    sectionHeader.values = ["Field", "Value"];
+    sectionHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    sectionHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: PRIMARY_ARGB } };
+    sectionHeader.eachCell((cell) => {
+      cell.border = {
+        top: { style: "thin", color: { argb: "FF0C3D67" } },
+        left: { style: "thin", color: { argb: "FF0C3D67" } },
+        bottom: { style: "thin", color: { argb: "FF0C3D67" } },
+        right: { style: "thin", color: { argb: "FF0C3D67" } },
+      };
+    });
+    writeRow += 1;
+
+    section.rows.forEach((entry, sectionIndex) => {
+      const row = summarySheet.getRow(writeRow);
+      row.values = [entry.label, String(entry.value)];
+
+      row.eachCell((cell, columnNumber) => {
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFE2E8F0" } },
+          left: { style: "thin", color: { argb: "FFE2E8F0" } },
+          bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+          right: { style: "thin", color: { argb: "FFE2E8F0" } },
+        };
+        cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+
+        if (sectionIndex % 2 === 0) {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SURFACE_ARGB } };
+        }
+
+        if (columnNumber === 1) {
+          cell.font = { bold: true, color: { argb: "FF334155" } };
+        }
+      });
+
+      writeRow += 1;
+    });
+
+    writeRow += 1;
+  });
+
+  const dataSheet = workbook.addWorksheet("Detailed Data", {
+    views: [{ state: "frozen", ySplit: 1 }],
+  });
+
+  dataSheet.columns = columns.map((column) => ({
+    header: column.header,
+    key: column.header,
+    width: column.width,
+  }));
+
+  rows.forEach((row) => {
+    dataSheet.addRow(columns.map((column) => column.value(row)));
+  });
+
+  const headerRow = dataSheet.getRow(1);
+  headerRow.height = 24;
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: PRIMARY_ARGB } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = {
+      top: { style: "thin", color: { argb: "FF0C3D67" } },
+      left: { style: "thin", color: { argb: "FF0C3D67" } },
+      bottom: { style: "thin", color: { argb: "FF0C3D67" } },
+      right: { style: "thin", color: { argb: "FF0C3D67" } },
+    };
+  });
+
+  const currencyColumnIndex = columns.findIndex((column) => column.kind === "currency") + 1;
+  const statusColumnIndex = columns.findIndex((column) => column.kind === "status") + 1;
+  const ticketColumnIndex = columns.findIndex((column) => column.kind === "ticket") + 1;
+
+  for (let rowIndex = 2; rowIndex <= dataSheet.rowCount; rowIndex += 1) {
+    const row = dataSheet.getRow(rowIndex);
+
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFE2E8F0" } },
+        left: { style: "thin", color: { argb: "FFE2E8F0" } },
+        bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+        right: { style: "thin", color: { argb: "FFE2E8F0" } },
+      };
+      cell.alignment = {
+        vertical: "middle",
+        horizontal: typeof cell.value === "number" ? "right" : "left",
+        wrapText: true,
+      };
+
+      if (rowIndex % 2 === 0) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: STRIPED_ROW_ARGB } };
+      }
+    });
+
+    if (currencyColumnIndex > 0) {
+      const revenueCell = row.getCell(currencyColumnIndex);
+      revenueCell.numFmt = '"INR" #,##0';
+    }
+
+    if (statusColumnIndex > 0) {
+      const statusCell = row.getCell(statusColumnIndex);
+      const style = getAttendanceCellStyle(String(statusCell.value ?? ""));
+      statusCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: style.fill } };
+      statusCell.font = { bold: true, color: { argb: style.text } };
+      statusCell.alignment = { horizontal: "center", vertical: "middle" };
+    }
+
+    if (ticketColumnIndex > 0) {
+      const ticketCell = row.getCell(ticketColumnIndex);
+      const style = getTicketTypeCellStyle(String(ticketCell.value ?? ""));
+      ticketCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: style.fill } };
+      ticketCell.font = { bold: true, color: { argb: style.text } };
+      ticketCell.alignment = { horizontal: "center", vertical: "middle" };
+    }
+  }
+
+  const headerEndColumn = getExcelColumnLabel(columns.length);
+  dataSheet.autoFilter = `A1:${headerEndColumn}1`;
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${filename}_${new Date().toISOString().slice(0, 10)}.xlsx`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
@@ -258,10 +502,33 @@ function getRoleLabel(user: AnalyticsUser | undefined): string {
   return "Student";
 }
 
+const DETAILED_EXPORT_COLUMNS: DetailedExportColumn[] = [
+  { header: "Registered At", width: 24, kind: "text", value: (row) => formatDateTime(row.registeredAt) },
+  { header: "Event Date", width: 16, kind: "text", value: (row) => formatDate(row.eventDate) },
+  { header: "Registration ID", width: 26, kind: "text", value: (row) => row.registrationId },
+  { header: "Event ID", width: 22, kind: "text", value: (row) => row.eventId },
+  { header: "Event Title", width: 32, kind: "text", value: (row) => row.eventTitle },
+  { header: "Fest ID", width: 20, kind: "text", value: (row) => row.festId ?? "" },
+  { header: "Fest Title", width: 28, kind: "text", value: (row) => row.festTitle },
+  { header: "Campus", width: 20, kind: "text", value: (row) => row.campus },
+  { header: "Department", width: 24, kind: "text", value: (row) => row.department },
+  { header: "Event Type", width: 22, kind: "text", value: (row) => row.eventType },
+  { header: "Registration Type", width: 18, kind: "text", value: (row) => row.registrationType },
+  { header: "Participant Organization", width: 24, kind: "text", value: (row) => row.participantOrganization },
+  { header: "Ticket Type", width: 16, kind: "ticket", value: (row) => row.ticketType },
+  { header: "Participants", width: 14, kind: "number", value: (row) => row.participantCount },
+  { header: "Attended Participants", width: 20, kind: "number", value: (row) => row.attendedParticipants },
+  { header: "Attendance Status", width: 18, kind: "status", value: (row) => row.attendanceStatus },
+  { header: "Estimated Revenue (INR)", width: 20, kind: "currency", value: (row) => Math.round(row.estimatedRevenue) },
+  { header: "Registrant Email", width: 34, kind: "text", value: (row) => row.registrantEmail },
+  { header: "Registrant Role", width: 16, kind: "text", value: (row) => row.registrantRole },
+];
+
 export default function DataExplorerDashboard() {
   const [dataset, setDataset] = useState<AnalyticsDataset | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isExportingXlsx, setIsExportingXlsx] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [datePreset, setDatePreset] = useState<DatePreset>("90d");
@@ -649,41 +916,81 @@ export default function DataExplorerDashboard() {
     [sortKey]
   );
 
-  const exportTableData = useCallback(() => {
+  const exportDetailedCsv = useCallback(() => {
     exportCsv(
-      "data_explorer",
-      [
-        "Registered At",
-        "Registration ID",
-        "Event",
-        "Fest",
-        "Campus",
-        "Department",
-        "Event Type",
-        "Ticket Type",
-        "Participants",
-        "Estimated Revenue",
-        "Attendance",
-        "Registrant Email",
-        "Registrant Role",
-      ],
-      tableRows.map((row) => [
-        row.registeredAt ? new Date(row.registeredAt).toLocaleString() : "",
-        row.registrationId,
-        row.eventTitle,
-        row.festTitle,
-        row.campus,
-        row.department,
-        row.eventType,
-        row.ticketType,
-        row.participantCount,
-        Math.round(row.estimatedRevenue),
-        row.attendanceStatus,
-        row.registrantEmail,
-        row.registrantRole,
-      ])
+      "data_explorer_detailed",
+      DETAILED_EXPORT_COLUMNS.map((column) => column.header),
+      tableRows.map((row) => DETAILED_EXPORT_COLUMNS.map((column) => column.value(row)))
     );
   }, [tableRows]);
+
+  const exportDetailedWorkbook = useCallback(async () => {
+    setIsExportingXlsx(true);
+
+    try {
+      const activeDateWindow = customStartDate || customEndDate
+        ? `${customStartDate || "Any start"} to ${customEndDate || "Any end"}`
+        : datePreset === "all"
+          ? "All time"
+          : datePreset.toUpperCase();
+
+      await exportDetailedXlsx("data_explorer_detailed", DETAILED_EXPORT_COLUMNS, tableRows, [
+        {
+          title: "Report Metadata",
+          rows: [
+            { label: "Export Generated At", value: new Date().toLocaleString("en-GB") },
+            {
+              label: "Data Snapshot Generated At",
+              value: dataset?.generatedAt ? new Date(dataset.generatedAt).toLocaleString("en-GB") : "-",
+            },
+            { label: "Rows Exported", value: tableRows.length },
+          ],
+        },
+        {
+          title: "Active Filters and Sort",
+          rows: [
+            { label: "Date Window", value: activeDateWindow },
+            { label: "Campus Filter", value: formatFilterSelection(campusFilter) },
+            { label: "Department Filter", value: formatFilterSelection(departmentFilter) },
+            { label: "Event Type Filter", value: formatFilterSelection(eventTypeFilter) },
+            { label: "Global Search", value: searchQuery.trim() || "None" },
+            { label: "Grid Search", value: tableQuery.trim() || "None" },
+            { label: "Sort", value: `${sortKey} (${sortDirection})` },
+          ],
+        },
+        {
+          title: "KPI Snapshot",
+          rows: [
+            { label: "Registrations In Scope", value: totalRegistrations.toLocaleString() },
+            { label: "Participants In Scope", value: totalParticipants.toLocaleString() },
+            { label: "Attendance In Scope", value: totalAttendance.toLocaleString() },
+            { label: "Conversion Rate", value: `${conversionRate.toFixed(1)}%` },
+            { label: "Estimated Revenue", value: toCurrency(totalRevenue) },
+          ],
+        },
+      ]);
+    } finally {
+      setIsExportingXlsx(false);
+    }
+  }, [
+    campusFilter,
+    conversionRate,
+    customEndDate,
+    customStartDate,
+    dataset?.generatedAt,
+    datePreset,
+    departmentFilter,
+    eventTypeFilter,
+    searchQuery,
+    sortDirection,
+    sortKey,
+    tableQuery,
+    tableRows,
+    totalAttendance,
+    totalParticipants,
+    totalRegistrations,
+    totalRevenue,
+  ]);
 
   if (isLoading) {
     return (
@@ -733,11 +1040,25 @@ export default function DataExplorerDashboard() {
             </button>
             <button
               type="button"
-              onClick={exportTableData}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#0f4c81] px-3 py-2 text-xs font-semibold text-white hover:bg-[#0c3d67]"
+              onClick={exportDetailedCsv}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#0f4c81]/30 bg-white px-3 py-2 text-xs font-semibold text-[#0f4c81] hover:bg-[#eff6ff]"
             >
               <Download className="h-3.5 w-3.5" />
               Export CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void exportDetailedWorkbook();
+              }}
+              disabled={isExportingXlsx}
+              className={classNames(
+                "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white",
+                isExportingXlsx ? "cursor-not-allowed bg-[#0f4c81]/70" : "bg-[#0f4c81] hover:bg-[#0c3d67]"
+              )}
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              {isExportingXlsx ? "Exporting XLSX..." : "Export XLSX"}
             </button>
           </div>
         </div>
