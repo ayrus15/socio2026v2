@@ -54,6 +54,19 @@ const AdminNotifications = dynamic(
   }
 );
 
+const DataExplorerDashboard = dynamic(
+  () => import("../_components/Admin/DataExplorerDashboard"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="p-12 text-center bg-white border border-gray-200 rounded-2xl">
+        <div className="w-12 h-12 border-4 border-[#154CB3] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+        <div className="text-gray-600">Loading data explorer...</div>
+      </div>
+    ),
+  }
+);
+
 type User = {
   id: number;
   email: string;
@@ -133,7 +146,7 @@ export default function MasterAdminPage() {
   const { userData, isMasterAdmin, isLoading: authLoading, session } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
-    "dashboard" | "insights" | "users" | "events" | "fests" | "notifications" | "report" | "settings"
+    "dashboard" | "insights" | "dataExplorer" | "users" | "events" | "fests" | "notifications" | "report" | "settings"
   >("dashboard");
   const authToken = session?.access_token || null;
 
@@ -695,6 +708,7 @@ export default function MasterAdminPage() {
   // ── Sidebar nav config ──
   const sidebarNav = [
     { id: "dashboard" as const, label: "Dashboard", icon: <LayoutDashboard className="w-4 h-4" /> },
+    { id: "dataExplorer" as const, label: "Data Explorer", icon: <LineChart className="w-4 h-4" /> },
     { id: "users" as const, label: "Users", icon: <Users className="w-4 h-4" />, count: users.length },
     { id: "events" as const, label: "Events", icon: <CalendarDays className="w-4 h-4" />, count: events.length },
     { id: "fests" as const, label: "Fests", icon: <Trophy className="w-4 h-4" />, count: fests.length },
@@ -813,6 +827,19 @@ export default function MasterAdminPage() {
                 registrations={registrations}
               />
             )}
+          </div>
+        )}
+
+        {/* Data Explorer Tab */}
+        {activeTab === "dataExplorer" && (
+          <div className="space-y-6">
+            <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+              <h2 className="text-xl font-bold text-gray-900 mb-1">Advanced Analytics Data Explorer</h2>
+              <p className="text-sm text-gray-500 mb-0">
+                PowerBI/Tableau-style relational analytics with global cross-filters, KPI recomputation, dynamic charts, and a dense exportable data grid.
+              </p>
+            </div>
+            <DataExplorerDashboard />
           </div>
         )}
 
