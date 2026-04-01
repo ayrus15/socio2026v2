@@ -41,6 +41,7 @@ interface Fest {
   fest_image_url: string;
   organizing_dept: string;
   created_by?: string;
+  campus_hosted_at?: string | null;
 }
 
 const ITEMS_PER_PAGE = 12;
@@ -288,19 +289,20 @@ export default function ManageDashboard() {
     getFests()
       .then((data) => {
         const mappedFests: Fest[] = Array.isArray(data) ? data.map((fest: any) => ({
-              fest_id: fest.fest_id,
+              fest_id: String(fest.fest_id || fest.id || fest.festId || fest.fest_title || fest.title || ""),
               fest_title: fest.fest_title || fest.title || "Untitled",
               description: fest.description || "",
               opening_date: fest.opening_date || null,
               closing_date: fest.closing_date || null,
               fest_image_url: fest.fest_image_url || "",
               organizing_dept: fest.organizing_dept || "",
-              created_by: fest.created_by || null,
+              created_by: fest.created_by || fest.createdBy || fest.user_email || fest.organiser_email || null,
+              campus_hosted_at: fest.campus_hosted_at || fest.campus || null,
         })) : [];
 
         const userSpecificFests = isMasterAdmin 
           ? mappedFests 
-          : mappedFests.filter((fest) => fest.created_by === userData.email);
+          : mappedFests.filter((fest) => !fest.created_by || fest.created_by === userData.email);
 
         setFests(userSpecificFests);
       })
@@ -809,7 +811,17 @@ export default function ManageDashboard() {
 
                   {selectedReportFest && (() => {
                     const selectedFestObj = fests.find(f => f.fest_id === selectedReportFest);
-                    const festEvents = contextAllEvents.filter(e => e.fest === selectedFestObj?.fest_title);
+                    const festEvents = contextAllEvents.filter((event) => {
+                      const matchesByFestId =
+                        Boolean(selectedFestObj?.fest_id) &&
+                        String((event as any).fest_id || "") === String(selectedFestObj?.fest_id || "");
+
+                      const matchesByFestTitle =
+                        String(event.fest || "").toLowerCase() ===
+                        String(selectedFestObj?.fest_title || "").toLowerCase();
+
+                      return matchesByFestId || matchesByFestTitle;
+                    });
                     if (festEvents.length === 0) {
                       return <div className="p-6 bg-white border border-slate-200 rounded-xl text-slate-500 text-sm">No specific events have been organized under this fest umbrella yet.</div>;
                     }
