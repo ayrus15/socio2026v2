@@ -46,13 +46,23 @@ interface Fest {
 
 const ITEMS_PER_PAGE = 12;
 
-type StatusFilter = "all" | "upcoming" | "past";
+type StatusFilter = "all" | "upcoming" | "past" | "archived";
 
-const STATUS_FILTER_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
+const FEST_STATUS_FILTER_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "upcoming", label: "Upcoming" },
   { value: "past", label: "Past" },
 ];
+
+const EVENT_STATUS_FILTER_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "upcoming", label: "Upcoming" },
+  { value: "past", label: "Past" },
+  { value: "archived", label: "Archived" },
+];
+
+const AUTO_ARCHIVE_DAYS = 15;
+const AUTO_ARCHIVE_MS = AUTO_ARCHIVE_DAYS * 24 * 60 * 60 * 1000;
 
 const CAMPUSES = [
   "Central Campus (Main)",
@@ -168,8 +178,30 @@ const MappedFestCard = ({ fest, baseUrl }: { fest: Fest, baseUrl: string }) => {
   );
 };
 
-const MappedEventCard = ({ event, baseUrl }: { event: ContextEvent, baseUrl: string }) => {
+type EventArchiveSource = "manual" | "auto" | null;
+
+const MappedEventCard = ({
+  event,
+  baseUrl,
+  isArchived,
+  archiveSource,
+  onToggleArchive,
+  isArchiveActionLoading,
+}: {
+  event: ContextEvent;
+  baseUrl: string;
+  isArchived: boolean;
+  archiveSource: EventArchiveSource;
+  onToggleArchive: (eventId: string, shouldArchive: boolean) => void;
+  isArchiveActionLoading: boolean;
+}) => {
   const isPast = event.event_date ? new Date(event.event_date) < new Date() : false;
+  const statusLabel = isArchived ? "ARCHIVED" : isPast ? "PAST" : "UPCOMING";
+  const statusClassName = isArchived
+    ? "bg-amber-100 text-amber-800"
+    : isPast
+      ? "bg-[#333333] text-white"
+      : "bg-white text-emerald-600";
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col hover:shadow-md transition-shadow duration-300">
@@ -180,12 +212,8 @@ const MappedEventCard = ({ event, baseUrl }: { event: ContextEvent, baseUrl: str
           className="w-full h-full object-cover"
         />
         <div className="absolute top-3 right-3">
-          <span
-            className={`px-3 py-1.5 text-[10px] font-bold rounded-full tracking-wider shadow-sm flex items-center ${
-              isPast ? "bg-[#333333] text-white" : "bg-white text-emerald-600"
-            }`}
-          >
-            {isPast ? "PAST" : "UPCOMING"}
+          <span className={`px-3 py-1.5 text-[10px] font-bold rounded-full tracking-wider shadow-sm flex items-center ${statusClassName}`}>
+            {statusLabel}
           </span>
         </div>
       </div>
@@ -199,21 +227,36 @@ const MappedEventCard = ({ event, baseUrl }: { event: ContextEvent, baseUrl: str
         <p className="text-sm text-slate-500 line-clamp-2">
           {(event as any).short_description || (event as any).description || "No description provided."}
         </p>
+        {isArchived && archiveSource === "auto" && (
+          <p className="text-xs font-semibold text-amber-700 mt-2">
+            Auto-archived after {AUTO_ARCHIVE_DAYS} days.
+          </p>
+        )}
       </div>
       <div className="px-5 py-3.5 border-t border-slate-100 flex justify-between items-center bg-slate-50/50">
         <div className="flex items-center gap-2 text-slate-500 text-sm font-medium">
           <Calendar className="w-4 h-4 text-slate-400" />
           {formatDateFull(event.event_date, "TBD")}
         </div>
-        {isPast ? (
-          <Link href={`/${baseUrl}/${event.event_id}`} className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 font-semibold text-sm transition-colors">
-            Archive <History className="w-4 h-4" />
-          </Link>
-        ) : (
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={isArchiveActionLoading}
+            onClick={() => onToggleArchive(event.event_id, !isArchived)}
+            className={`flex items-center gap-1.5 font-semibold text-sm transition-colors cursor-pointer ${
+              isArchiveActionLoading
+                ? "text-slate-400 cursor-not-allowed"
+                : isArchived
+                  ? "text-emerald-700 hover:text-emerald-800"
+                  : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            {isArchiveActionLoading ? "Saving..." : isArchived ? "Unarchive" : "Archive"} <History className="w-4 h-4" />
+          </button>
           <Link href={`/${baseUrl}/${event.event_id}`} className="flex items-center gap-1.5 text-[#154cb3] font-semibold text-sm hover:underline">
             Manage <ArrowRight className="w-4 h-4" />
           </Link>
-        )}
+        </div>
       </div>
     </div>
   );
@@ -251,6 +294,8 @@ export default function ManageDashboard() {
   const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
   const [searchTermReport, setSearchTermReport] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [archiveOverrides, setArchiveOverrides] = useState<Record<string, { is_archived: boolean; archived_at: string | null }>>({});
+  const [archiveUpdatingIds, setArchiveUpdatingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -262,6 +307,12 @@ export default function ManageDashboard() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "fests" && statusFilter === "archived") {
+      setStatusFilter("all");
+    }
+  }, [activeTab, statusFilter]);
 
   // Load Auth Token for Reports
   useEffect(() => {
@@ -312,24 +363,59 @@ export default function ManageDashboard() {
 
 
   // Permissions & Campus logic for Events
-  const isPastDate = (date: string | null | undefined) => {
-    if (!date) return false;
+  const getValidDate = (date: string | null | undefined) => {
+    if (!date) return null;
     const parsedDate = new Date(date);
-    if (Number.isNaN(parsedDate.getTime())) return false;
+    if (Number.isNaN(parsedDate.getTime())) return null;
+    return parsedDate;
+  };
+
+  const isPastDate = (date: string | null | undefined) => {
+    const parsedDate = getValidDate(date);
+    if (!parsedDate) return false;
     return parsedDate < new Date();
   };
 
-  const matchesStatus = (isPast: boolean) => {
-    if (statusFilter === "all") return true;
-    if (statusFilter === "past") return isPast;
-    return !isPast;
+  const isAutoArchivedEvent = (event: ContextEvent) => {
+    const eventDate = getValidDate(event.event_date);
+    if (!eventDate) return false;
+    return Date.now() - eventDate.getTime() >= AUTO_ARCHIVE_MS;
+  };
+
+  const toBoolean = (value: unknown) =>
+    value === true || value === 1 || value === "1" || value === "true";
+
+  const getEffectiveArchiveState = (event: ContextEvent): { isArchived: boolean; archiveSource: EventArchiveSource } => {
+    const override = archiveOverrides[event.event_id];
+    const manualArchived = override
+      ? override.is_archived
+      : toBoolean(event.is_archived);
+    const autoArchived = isAutoArchivedEvent(event);
+
+    if (manualArchived) {
+      return { isArchived: true, archiveSource: "manual" };
+    }
+
+    if (autoArchived) {
+      return { isArchived: true, archiveSource: "auto" };
+    }
+
+    return { isArchived: false, archiveSource: null };
+  };
+
+  const matchesStatus = (isPast: boolean, isArchived: boolean) => {
+    if (statusFilter === "all") return !isArchived;
+    if (statusFilter === "archived") return isArchived;
+    if (statusFilter === "past") return !isArchived && isPast;
+    return !isArchived && !isPast;
   };
 
   const userSpecificContextEvents = (contextAllEvents as ContextEvent[]).filter((e) => {
     const isOwnerOrMaster = isMasterAdmin || (userData?.email && e.created_by === userData.email);
     const matchesCampus = campusFilter === "all" || (e as any).campus_hosted_at === campusFilter;
     const eventIsPast = isPastDate(e.event_date);
-    return isOwnerOrMaster && matchesCampus && matchesStatus(eventIsPast);
+    const archiveState = getEffectiveArchiveState(e);
+    return isOwnerOrMaster && matchesCampus && matchesStatus(eventIsPast, archiveState.isArchived);
   });
 
   // Filter Grids
@@ -337,14 +423,18 @@ export default function ManageDashboard() {
     event.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
   const searchedUserFests = fests.filter((fest) => {
+    if (statusFilter === "archived") return false;
     const matchesSearch = fest.fest_title.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCampus = campusFilter === "all" || (fest as any).campus_hosted_at === campusFilter;
     const festIsPast = isPastDate(fest.closing_date);
-    return matchesSearch && matchesCampus && matchesStatus(festIsPast);
+    return matchesSearch && matchesCampus && matchesStatus(festIsPast, false);
   });
 
+  const activeStatusFilterOptions =
+    activeTab === "events" ? EVENT_STATUS_FILTER_OPTIONS : FEST_STATUS_FILTER_OPTIONS;
+
   const selectedStatusLabel =
-    STATUS_FILTER_OPTIONS.find((option) => option.value === statusFilter)?.label || "All";
+    activeStatusFilterOptions.find((option) => option.value === statusFilter)?.label || "All";
 
   // Pagination Helper
   const paginateArray = <T,>(array: T[], page: number) => {
@@ -605,6 +695,62 @@ export default function ManageDashboard() {
     }
   };
 
+  const handleToggleArchive = async (eventId: string, shouldArchive: boolean) => {
+    if (!authToken) {
+      toast.error("Please sign in again to update archive status.");
+      return;
+    }
+
+    setArchiveUpdatingIds((prev) => {
+      const next = new Set(prev);
+      next.add(eventId);
+      return next;
+    });
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/api/events/${eventId}/archive`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ archive: shouldArchive }),
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to update archive status.");
+      }
+
+      const event = payload?.event as Partial<ContextEvent> | undefined;
+      setArchiveOverrides((prev) => ({
+        ...prev,
+        [eventId]: {
+          is_archived: Boolean(event?.is_archived ?? shouldArchive),
+          archived_at:
+            typeof event?.archived_at === "string"
+              ? event.archived_at
+              : shouldArchive
+                ? new Date().toISOString()
+                : null,
+        },
+      }));
+
+      toast.success(shouldArchive ? "Event archived successfully." : "Event moved back to active list.");
+    } catch (error: any) {
+      console.error("Archive update failed:", error);
+      toast.error(error?.message || "Unable to update archive status.");
+    } finally {
+      setArchiveUpdatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(eventId);
+        return next;
+      });
+    }
+  };
+
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
@@ -694,7 +840,7 @@ export default function ManageDashboard() {
 
                 {isStatusFilterOpen && (
                   <div className="absolute top-full left-0 mt-2 w-44 bg-white border border-slate-200 rounded-lg shadow-lg z-30 overflow-hidden">
-                    {STATUS_FILTER_OPTIONS.map((option) => (
+                    {activeStatusFilterOptions.map((option) => (
                       <button
                         key={option.value}
                         type="button"
@@ -751,12 +897,27 @@ export default function ManageDashboard() {
               {isLoadingContextEvents ? (
                 <div className="text-center text-slate-500 py-10 text-sm font-medium animate-pulse">Loading Your Events...</div>
               ) : paginatedEvents.items.length === 0 ? (
-                <div className="text-center text-slate-500 py-10 text-sm font-medium">No results found.</div>
+                <div className="text-center text-slate-500 py-10 text-sm font-medium">
+                  {statusFilter === "archived"
+                    ? `No archived events found. Events auto-archive after ${AUTO_ARCHIVE_DAYS} days.`
+                    : "No results found."}
+                </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {paginatedEvents.items.map((event) => (
-                        <MappedEventCard key={event.event_id} event={event} baseUrl="edit/event" />
-                    ))}
+                    {paginatedEvents.items.map((event) => {
+                        const archiveState = getEffectiveArchiveState(event);
+                        return (
+                          <MappedEventCard
+                            key={event.event_id}
+                            event={event}
+                            baseUrl="edit/event"
+                            isArchived={archiveState.isArchived}
+                            archiveSource={archiveState.archiveSource}
+                            onToggleArchive={handleToggleArchive}
+                            isArchiveActionLoading={archiveUpdatingIds.has(event.event_id)}
+                          />
+                        );
+                    })}
                 </div>
               )}
             </>

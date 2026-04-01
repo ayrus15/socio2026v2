@@ -73,7 +73,10 @@ CREATE TABLE events (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   registration_deadline TIMESTAMPTZ,
-  total_participants INTEGER DEFAULT 0
+  total_participants INTEGER DEFAULT 0,
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+  archived_at TIMESTAMPTZ,
+  archived_by TEXT
 );
 
 -- Fest table (singular)

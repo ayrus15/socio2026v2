@@ -39,11 +39,56 @@ const normalizeJsonField = (value) => {
   return [];
 };
 
+const AUTO_ARCHIVE_DAYS = (() => {
+  const parsedDays = Number.parseInt(process.env.EVENT_AUTO_ARCHIVE_DAYS || "15", 10);
+  return Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : 15;
+})();
+
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+const getValidDate = (value) => {
+  if (!value) return null;
+  const parsedDate = new Date(value);
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+};
+
+const isAutoArchivedByDate = (eventDate) => {
+  const parsedEventDate = getValidDate(eventDate);
+  if (!parsedEventDate) return false;
+  return Date.now() - parsedEventDate.getTime() >= AUTO_ARCHIVE_DAYS * DAY_IN_MS;
+};
+
+const asBoolean = (value) => {
+  return value === true || value === 1 || value === "1" || value === "true";
+};
+
+const deriveArchiveState = (event) => {
+  const manualArchived = asBoolean(event?.is_archived);
+  const autoArchived = isAutoArchivedByDate(event?.event_date);
+
+  return {
+    is_archived: manualArchived,
+    archived_at: event?.archived_at || null,
+    archived_effective: manualArchived || autoArchived,
+    archive_source: manualArchived ? "manual" : autoArchived ? "auto" : null,
+  };
+};
+
+const isMissingArchiveColumnsError = (error) => {
+  const code = String(error?.code || "");
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "42703" ||
+    (message.includes("column") &&
+      (message.includes("is_archived") || message.includes("archived_at") || message.includes("archived_by")))
+  );
+};
+
 
 // GET all events - PUBLIC ACCESS (no auth required)
 router.get("/", async (req, res) => {
   try {
-    const { page, pageSize, search, status, sortBy, sortOrder } = req.query;
+    const { page, pageSize, search, status, sortBy, sortOrder, archive } = req.query;
     const events = await queryAll("events", { order: { column: "created_at", ascending: false } });
 
     // Build registration counts once so both sorting and UI display use the same value.
@@ -56,15 +101,19 @@ router.get("/", async (req, res) => {
     });
 
     // Parse JSON fields for each event
-    let processedEvents = events.map(event => ({
-      ...event,
-      department_access: normalizeJsonField(event.department_access),
-      rules: normalizeJsonField(event.rules),
-      schedule: normalizeJsonField(event.schedule),
-      prizes: normalizeJsonField(event.prizes),
-      custom_fields: normalizeJsonField(event.custom_fields),
-      registration_count: eventRegistrationCounts[event.event_id] || 0
-    }));
+    let processedEvents = events.map((event) => {
+      const archiveState = deriveArchiveState(event);
+      return {
+        ...event,
+        department_access: normalizeJsonField(event.department_access),
+        rules: normalizeJsonField(event.rules),
+        schedule: normalizeJsonField(event.schedule),
+        prizes: normalizeJsonField(event.prizes),
+        custom_fields: normalizeJsonField(event.custom_fields),
+        registration_count: eventRegistrationCounts[event.event_id] || 0,
+        ...archiveState,
+      };
+    });
 
     const normalizedSearch = typeof search === "string" ? search.trim().toLowerCase() : "";
     if (normalizedSearch) {
@@ -86,6 +135,13 @@ router.get("/", async (req, res) => {
         if (normalizedStatus === "upcoming") return diffDays > 7;
         return true;
       });
+    }
+
+    const normalizedArchive = typeof archive === "string" ? archive.toLowerCase() : "all";
+    if (normalizedArchive === "archived") {
+      processedEvents = processedEvents.filter((event) => event.archived_effective);
+    } else if (normalizedArchive === "active") {
+      processedEvents = processedEvents.filter((event) => !event.archived_effective);
     }
 
     const normalizedSortBy = typeof sortBy === "string" ? sortBy : "date";
@@ -143,7 +199,8 @@ router.get("/", async (req, res) => {
       },
       filters: {
         search: normalizedSearch,
-        status: normalizedStatus
+        status: normalizedStatus,
+        archive: normalizedArchive,
       },
       sort: {
         by: normalizedSortBy,
@@ -174,13 +231,15 @@ router.get("/:eventId", async (req, res) => {
     }
 
     // Parse JSON fields
+    const archiveState = deriveArchiveState(event);
     const processedEvent = {
       ...event,
       department_access: normalizeJsonField(event.department_access),
       rules: normalizeJsonField(event.rules),
       schedule: normalizeJsonField(event.schedule),
       prizes: normalizeJsonField(event.prizes),
-      custom_fields: normalizeJsonField(event.custom_fields)
+      custom_fields: normalizeJsonField(event.custom_fields),
+      ...archiveState,
     };
 
     return res.status(200).json({ event: processedEvent });
@@ -423,6 +482,75 @@ router.post(
         error: "Internal server error while creating event.",
         details: error.message // Include error message for debugging
       });
+    }
+  }
+);
+
+// PATCH archive/unarchive event - REQUIRES AUTHENTICATION + OWNERSHIP OR MASTER ADMIN
+router.patch(
+  "/:eventId/archive",
+  authenticateUser,
+  getUserInfo(),
+  checkRoleExpiration,
+  (req, res, next) => {
+    if (req.userInfo?.is_masteradmin || req.userInfo?.is_organiser) {
+      return next();
+    }
+    return res.status(403).json({ error: "Access denied: Organiser privileges required" });
+  },
+  requireOwnership("events", "eventId", "auth_uuid"),
+  async (req, res) => {
+    try {
+      const { eventId } = req.params;
+      const rawArchiveValue = req.body?.archive;
+      const shouldArchive =
+        rawArchiveValue === true || rawArchiveValue === "true" || rawArchiveValue === 1 || rawArchiveValue === "1";
+      const shouldUnarchive =
+        rawArchiveValue === false || rawArchiveValue === "false" || rawArchiveValue === 0 || rawArchiveValue === "0";
+
+      if (!shouldArchive && !shouldUnarchive) {
+        return res.status(400).json({
+          error: "Invalid payload: 'archive' must be a boolean (true or false).",
+        });
+      }
+
+      const archiveValue = shouldArchive;
+      const nowIso = new Date().toISOString();
+      const updatedRows = await update(
+        "events",
+        {
+          is_archived: archiveValue,
+          archived_at: archiveValue ? nowIso : null,
+          archived_by: archiveValue ? req.userInfo?.email || req.userId || null : null,
+          updated_at: nowIso,
+          updated_by: req.userInfo?.email || null,
+        },
+        { event_id: eventId }
+      );
+
+      if (!updatedRows || updatedRows.length === 0) {
+        return res.status(404).json({ error: "Event not found." });
+      }
+
+      const updatedEvent = updatedRows[0];
+      const archiveState = deriveArchiveState(updatedEvent);
+
+      return res.status(200).json({
+        message: archiveValue ? "Event archived successfully." : "Event moved back to active list.",
+        event: {
+          ...updatedEvent,
+          ...archiveState,
+        },
+      });
+    } catch (error) {
+      if (isMissingArchiveColumnsError(error)) {
+        return res.status(500).json({
+          error: "Archive columns are missing. Run latest DB migrations and retry.",
+        });
+      }
+
+      console.error("Server error PATCH /api/events/:eventId/archive:", error);
+      return res.status(500).json({ error: "Internal server error while updating archive state." });
     }
   }
 );

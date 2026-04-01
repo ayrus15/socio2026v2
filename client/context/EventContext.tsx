@@ -76,6 +76,9 @@ export interface FetchedEvent {
   allow_outsiders?: boolean | null;
   campus_hosted_at?: string | null;
   allowed_campuses?: string[] | string | null;
+  is_archived?: boolean | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
 }
 
 const normalizeCampusText = (value: string | null | undefined): string => {
