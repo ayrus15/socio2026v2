@@ -296,7 +296,7 @@ function NavigationBar() {
         </div>
 
         {/* Right side - Search Bar and Auth Buttons */}
-<div ref={rightControlsRef} className="flex items-center gap-2 lg:gap-3 flex-shrink-0 min-w-0 w-full md:w-auto justify-end">
+<div ref={rightControlsRef} className="md:ml-auto flex items-center gap-2 lg:gap-3 flex-shrink-0 min-w-0 w-full md:w-auto justify-end">
             {/* Search Bar */}
           <form onSubmit={handleSearchSubmit} className="hidden sm:flex">
             <div className="relative">
