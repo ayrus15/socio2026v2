@@ -429,6 +429,9 @@ router.put(
       }
 
       updatePayload.updated_at = new Date().toISOString();
+      
+      console.log(`[Fest Update] Payload for ${festId}:`, JSON.stringify(updatePayload, null, 2));
+      console.log(`[Fest Update] Using table: ${festTable}`);
 
       if (titleChanged) {
         try {
@@ -448,7 +451,18 @@ router.put(
         } catch (eventsError) { }
       }
 
-      const updated = await update(festTable, updatePayload, { fest_id: festId });
+      const updated = await update(festTable, updatePayload, { fest_id: festId }).catch(async (updateError) => {
+        console.error("[Fest Update ERROR] Supabase update failed:", {
+          errorMessage: updateError.message,
+          errorCode: updateError.code,
+          errorDetails: JSON.stringify(updateError, null, 2),
+          tableName: festTable,
+          festId: festId,
+          payloadKeys: Object.keys(updatePayload)
+        });
+        throw updateError;
+      });
+      
       let updatedFest = updated?.[0];
       
       // If update didn't return data, try fetching the updated fest
