@@ -120,10 +120,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setShowCampusModal(true);
             }
           });
+        } else {
+          setSession(null);
+          setUserData(null);
+          persistSession(null);
         }
       } catch (error) {
         console.error("Error checking user session:", error);
-        // Don't fail completely - just log the error
+      } finally {
         setIsLoading(false);
       }
     };
@@ -133,6 +137,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, newSession: Session | null) => {
+      if (event === "INITIAL_SESSION") {
+        setSession(newSession);
+        persistSession(newSession);
+        if (newSession?.user?.email) {
+          void fetchUserData(newSession.user.email);
+        } else {
+          setUserData(null);
+        }
+        setIsLoading(false);
+        return;
+      }
+
       if (event === "SIGNED_IN" && newSession) {
         // Resolve auth state immediately and load profile details in background.
         setSession(newSession);
@@ -181,6 +197,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(newSession);
         persistSession(newSession);
         void fetchUserData(newSession.user.email!);
+      } else if (event === "TOKEN_REFRESHED" && newSession) {
+        setSession(newSession);
+        persistSession(newSession);
+        setIsLoading(false);
       }
     });
 
@@ -269,7 +289,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/users/${email}`);
+      const response = await fetch(`${API_URL}/api/users/${encodeURIComponent(email)}`);
       if (!response.ok) {
         if (response.status === 404) {
           console.warn(
@@ -296,15 +316,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     try {
       const redirectOrigin = typeof window !== "undefined" ? window.location.origin : APP_URL;
-      await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo: `${redirectOrigin}/auth/callback`,
         },
       });
+
+      if (error) {
+        throw error;
+      }
     } catch (error) {
       console.error("Google authentication error:", error);
       setIsLoading(false);
+      throw error;
     }
   };
 
