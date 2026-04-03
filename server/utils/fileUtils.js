@@ -112,7 +112,7 @@ export async function uploadFileToSupabase(file, bucketName, eventIdForPath) {
     .upload(fileName, file.buffer, {
       contentType: file.mimetype,
       cacheControl: "3600",
-      upsert: false
+      upsert: true
     });
 
   if (uploadError) {
