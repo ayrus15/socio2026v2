@@ -183,7 +183,7 @@ const NotificationSystemComponent: React.FC<NotificationSystemProps> = ({
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     setUnreadCount(0);
 
-    // Also sync to backend (non-blocking)
+    // Also sync to backend and refetch to ensure state is correct
     if (session?.access_token && userData?.email) {
       fetch(
         `${API_URL}/api/notifications/mark-read`,
@@ -195,9 +195,14 @@ const NotificationSystemComponent: React.FC<NotificationSystemProps> = ({
           },
           body: JSON.stringify({ email: userData.email })
         }
-      ).catch(err => console.error("Backend sync failed:", err));
+      )
+      .then(() => {
+        // After backend sync, refetch to ensure UI matches backend state
+        setTimeout(() => fetchNotifications(), 500);
+      })
+      .catch(err => console.error("Backend sync failed:", err));
     }
-  }, [notifications, session?.access_token, userData?.email]);
+  }, [notifications, session?.access_token, userData?.email, fetchNotifications]);
 
   const clearAllNotifications = useCallback(() => {
     // ─── CLEAR LOCAL STORAGE ───
@@ -212,7 +217,7 @@ const NotificationSystemComponent: React.FC<NotificationSystemProps> = ({
     setTotalPages(1);
     setHasMore(false);
 
-    // Also sync to backend (non-blocking)
+    // Also sync to backend and refetch to ensure state is correct
     if (session?.access_token && userData?.email) {
       fetch(
         `${API_URL}/api/notifications/clear-all?email=${encodeURIComponent(userData.email)}`,
@@ -222,9 +227,14 @@ const NotificationSystemComponent: React.FC<NotificationSystemProps> = ({
             Authorization: `Bearer ${session.access_token}`,
           },
         }
-      ).catch(err => console.error("Backend sync failed:", err));
+      )
+      .then(() => {
+        // After backend sync, refetch to ensure UI matches backend state
+        setTimeout(() => fetchNotifications(), 500);
+      })
+      .catch(err => console.error("Backend sync failed:", err));
     }
-  }, [session?.access_token, userData?.email]);
+  }, [session?.access_token, userData?.email, fetchNotifications]);
 
   const deleteNotification = async (notificationId: string) => {
     if (!session?.access_token) return;
