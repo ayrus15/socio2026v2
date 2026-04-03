@@ -381,6 +381,11 @@ export default function MasterAdminPage() {
       setIsLoading(true);
       const token = await getFreshToken();
 
+      if (!token) {
+        // Session can be briefly unavailable right after reload; avoid noisy hard failures.
+        throw new Error("Authentication session is still loading. Please retry.");
+      }
+
       const query = new URLSearchParams();
       if (!options?.unpaged) {
         query.set("page", String(userPage));
@@ -392,12 +397,22 @@ export default function MasterAdminPage() {
       }
 
       const url = `${API_URL}/api/users${query.toString() ? `?${query.toString()}` : ""}`;
-      
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+
+      const makeRequest = async (authToken: string) =>
+        fetch(url, {
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+          },
+        });
+
+      let response = await makeRequest(token);
+
+      if (response.status === 401 || response.status === 403) {
+        const refreshedToken = await getFreshToken();
+        if (refreshedToken) {
+          response = await makeRequest(refreshedToken);
+        }
+      }
 
       if (!response.ok) {
         let errorMessage = "Failed to fetch users";
