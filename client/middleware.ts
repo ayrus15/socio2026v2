@@ -83,11 +83,13 @@ export async function middleware(req: NextRequest) {
 
     const { data: userData, error } = await supabase
       .from("users")
-      .select("is_organiser")
+      .select("is_organiser, is_masteradmin")
       .eq("email", user.email)
       .single();
 
-    if (error || !userData || !userData.is_organiser) {
+    const canManage = Boolean(userData?.is_organiser) || Boolean(userData?.is_masteradmin);
+
+    if (error || !userData || !canManage) {
       return redirect("/error");
     }
   }

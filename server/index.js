@@ -172,8 +172,13 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
-  console.log(`✅ Server is running on port ${PORT}`);
-  console.log(`📁 Upload directory: ${path.join(__dirname, 'uploads')}`);
-  console.log(`🗄️  Database: Supabase (${process.env.SUPABASE_URL || 'not configured'})`);
-});
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`✅ Server is running on port ${PORT}`);
+    console.log(`📁 Upload directory: ${path.join(__dirname, 'uploads')}`);
+    console.log(`🗄️  Database: Supabase (${process.env.SUPABASE_URL || 'not configured'})`);
+  });
+}
+
+export default app;

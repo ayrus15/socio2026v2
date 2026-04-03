@@ -4,10 +4,14 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+const appUrl =
+  process.env.APP_URL ||
+  process.env.NEXT_PUBLIC_APP_URL ||
+  process.env.FRONTEND_URL ||
+  "https://sociodev.vercel.app";
 
-if (!appUrl) {
-  throw new Error('Missing APP_URL or NEXT_PUBLIC_APP_URL');
+if (!process.env.APP_URL && !process.env.NEXT_PUBLIC_APP_URL && !process.env.FRONTEND_URL) {
+  console.warn('APP_URL/NEXT_PUBLIC_APP_URL not set. Falling back to https://sociodev.vercel.app for email links.');
 }
 
 const appOrigin = appUrl.replace(/\/$/, '');

@@ -88,6 +88,8 @@ function NavigationBar() {
   const displayName = userData?.name || sessionDisplayName;
   const displayAvatar = userData?.avatar_url || session?.user?.user_metadata?.avatar_url || null;
   const avatarInitial = (displayName || "U").charAt(0).toUpperCase();
+  const isMasterAdmin = Boolean((userData as any)?.is_masteradmin);
+  const canManageEvents = Boolean(userData?.is_organiser || isMasterAdmin);
   const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
 
   useEffect(() => {
@@ -344,20 +346,20 @@ function NavigationBar() {
                 <div className="h-9 w-24 rounded-full bg-gray-200 animate-pulse" />
               </div>
             ) : session ? (
-              userData && (userData.is_organiser || (userData as any).is_masteradmin) ? (
+              userData && canManageEvents ? (
                 <div className="flex gap-2 sm:gap-4 items-center md:flex-nowrap justify-end">
                   <NotificationSystem />
-                  {!isDesktopCompact && (userData as any).is_masteradmin && (
+                  {!isDesktopCompact && isMasterAdmin && (
                     <Link href="/masteradmin">
                       <button className="cursor-pointer font-semibold px-3 py-1.5 sm:px-4 sm:py-2 border-2 rounded-full text-xs sm:text-sm hover:bg-red-50 border-red-600 text-red-600 transition-all duration-200 ease-in-out">
-                        {(userData as any).is_masteradmin ? 'Admin Panel' : 'Admin (Dev)'}
+                        Main Admin
                       </button>
                     </Link>
                   )}
-                  {!isDesktopCompact && userData.is_organiser && (
+                  {!isDesktopCompact && canManageEvents && (
                     <Link href="/manage">
                       <button className="cursor-pointer font-semibold px-3 py-1.5 sm:px-4 sm:py-2 border-2 rounded-full text-xs sm:text-sm hover:bg-[#f3f3f3] transition-all duration-200 ease-in-out">
-                        {userData.is_organiser ? 'Manage events' : 'Manage (Dev)'}
+                        Manage events
                       </button>
                     </Link>
                   )}
@@ -591,6 +593,30 @@ function NavigationBar() {
                 );
               })}
             </div>
+
+            {session && userData && (canManageEvents || isMasterAdmin) && (
+              <div className="border-t border-gray-200 px-4 py-4 space-y-2">
+                <p className="px-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Quick Access</p>
+                {isMasterAdmin && (
+                  <Link
+                    href="/masteradmin"
+                    onClick={closeDesktopMenu}
+                    className="block w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-100 transition-colors duration-200"
+                  >
+                    Main Admin
+                  </Link>
+                )}
+                {canManageEvents && (
+                  <Link
+                    href="/manage"
+                    onClick={closeDesktopMenu}
+                    className="block w-full rounded-lg border border-[#154CB3]/20 bg-[#154CB3]/5 px-3 py-2.5 text-sm font-semibold text-[#154CB3] hover:bg-[#154CB3]/10 transition-colors duration-200"
+                  >
+                    Manage events
+                  </Link>
+                )}
+              </div>
+            )}
           </aside>
         </>
       )}
