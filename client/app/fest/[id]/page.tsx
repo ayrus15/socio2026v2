@@ -28,6 +28,11 @@ interface FestDataFromAPI {
   faqs?: { question: string; answer: string }[];
 }
 
+type EventWithFlexibleFest = ContextFetchedEvent & {
+  fest_id?: string | null;
+  fest_title?: string | null;
+};
+
 interface FestDetails {
   id: string;
   title: string;
@@ -118,6 +123,43 @@ const FestPage = () => {
     ContextFetchedEvent[]
   >([]);
 
+  const normalizeFestRef = (value: unknown): string => {
+    if (value === undefined || value === null) return "";
+    const normalized = String(value).trim().toLowerCase();
+    if (!normalized || normalized === "none" || normalized === "null" || normalized === "undefined") {
+      return "";
+    }
+    return normalized;
+  };
+
+  const filterEventsForFest = React.useCallback(
+    (events: EventWithFlexibleFest[], festId: string, festTitle?: string) => {
+      const normalizedFestId = normalizeFestRef(festId);
+      const normalizedFestTitle = normalizeFestRef(festTitle);
+
+      return (events || []).filter((event) => {
+        if (!event) return false;
+
+        const eventFestId = normalizeFestRef(event.fest_id);
+        const eventFest = normalizeFestRef(event.fest);
+        const eventFestTitle = normalizeFestRef(event.fest_title);
+
+        if (normalizedFestId) {
+          if (eventFestId === normalizedFestId || eventFest === normalizedFestId) {
+            return true;
+          }
+        }
+
+        if (normalizedFestTitle) {
+          return eventFestTitle === normalizedFestTitle || eventFest === normalizedFestTitle;
+        }
+
+        return false;
+      });
+    },
+    []
+  );
+
   useEffect(() => {
     if (!festIdSlug) {
       setErrorFestDetails("Fest ID is missing from URL.");
@@ -176,37 +218,37 @@ const FestPage = () => {
   }, [festIdSlug]);
 
   useEffect(() => {
-    if (isLoadingEventsContext) {
-      return;
+    if (!festIdSlug || !festDetails) return;
+
+    const festTitle = festDetails.title;
+    let cancelled = false;
+
+    if (!isLoadingEventsContext) {
+      const contextMatches = filterEventsForFest(allEvents as EventWithFlexibleFest[], festIdSlug, festTitle);
+      setFestSpecificEvents(contextMatches);
     }
-    if (!festIdSlug || allEvents.length === 0) {
-      setFestSpecificEvents([]);
-      return;
-    }
 
-    const normalizedFestIdSlug = String(festIdSlug).trim().toLowerCase();
+    const API_URL = process.env.NEXT_PUBLIC_API_URL!.replace(/\/api\/?$/, "");
 
-    const filtered = allEvents.filter((event) => {
-      if (!event) {
-        return false;
-      }
+    fetch(`${API_URL}/api/events`, { cache: "no-store" })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to fetch events (status: ${res.status})`);
+        return res.json();
+      })
+      .then((payload: { events?: EventWithFlexibleFest[] }) => {
+        if (cancelled) return;
+        const latestEvents = Array.isArray(payload?.events) ? payload.events : [];
+        const freshMatches = filterEventsForFest(latestEvents, festIdSlug, festTitle);
+        setFestSpecificEvents(freshMatches);
+      })
+      .catch((error) => {
+        console.error("Failed to refresh fest events:", error);
+      });
 
-      const eventFestRefRaw =
-        (event as ContextFetchedEvent & { fest_id?: string | null }).fest_id ??
-        event.fest ??
-        "";
-
-      const eventFestRef = String(eventFestRefRaw).trim().toLowerCase();
-
-      if (!eventFestRef || eventFestRef === "none" || eventFestRef === "null") {
-        return false;
-      }
-
-      return eventFestRef === normalizedFestIdSlug;
-    });
-
-    setFestSpecificEvents(filtered);
-  }, [isLoadingEventsContext, allEvents, festIdSlug]);
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoadingEventsContext, allEvents, festIdSlug, festDetails, filterEventsForFest]);
 
   if (loadingFestDetails) {
     return (
