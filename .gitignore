@@ -41,7 +41,10 @@ desktop.ini
 *.swn
 
 # Database dumps and misc
-# sociows.sql - Tracking as per user request
+# Keep socios.sql tracked; ignore other top-level SQL files
+/*.sql
+!/socios.sql
+# socios.sql - Tracking as per user request
 # InternsNDA.tex - Tracking as per user request
 # pitch-deck.html - Tracking as per user request
 work_log_*.md

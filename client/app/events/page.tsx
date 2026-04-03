@@ -4,8 +4,10 @@ import React, { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEvents } from "../../context/EventContext";
+import { useAuth } from "@/context/AuthContext";
 import { EventCard } from "../_components/Discover/EventCard";
 import Footer from "../_components/Home/Footer";
+import { toast } from "sonner";
 
 const ITEMS_PER_PAGE = 12;
 
@@ -23,6 +25,7 @@ interface FetchedEvent {
   event_image_url: string | null;
   organizing_dept: string | null;
   allow_outsiders?: boolean | null;
+  is_archived?: boolean | null;
 }
 
 interface FilterOption {
@@ -52,8 +55,10 @@ const EventsPageContent = () => {
   const searchParam = searchParams.get("search") || "";
   const [searchQuery, setSearchQuery] = useState(searchParam);
   const [currentPage, setCurrentPage] = useState(1);
+  const [archiveUpdatingIds, setArchiveUpdatingIds] = useState<Set<string>>(new Set());
 
   const { allEvents, isLoading, error } = useEvents();
+  const { userData, authToken } = useAuth();
 
   const [filterOptions, setFilterOptions] = useState<FilterOption[]>([
     { name: "All", active: true },
@@ -123,6 +128,48 @@ const EventsPageContent = () => {
   }, [categoryParam, router, searchParam, searchQuery]);
 
   const eventsToFilter = Array.isArray(allEvents) ? allEvents : [];
+
+  const handleToggleArchive = async (eventId: string, shouldArchive: boolean) => {
+    if (!authToken) {
+      toast.error("Please sign in again to update archive status.");
+      return;
+    }
+
+    setArchiveUpdatingIds((prev) => {
+      const next = new Set(prev);
+      next.add(eventId);
+      return next;
+    });
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/api/events/${eventId}/archive`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ archive: shouldArchive }),
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to update archive status.");
+      }
+
+      toast.success(shouldArchive ? "Event archived successfully." : "Event moved back to active list.");
+    } catch (error: any) {
+      console.error("Archive update failed:", error);
+      toast.error(error?.message || "Unable to update archive status.");
+    } finally {
+      setArchiveUpdatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(eventId);
+        return next;
+      });
+    }
+  };
   const filteredEvents = (eventsToFilter as FetchedEvent[]).filter((event) => {
     // Category filter
     if (activeFilterName !== "All") {
@@ -343,6 +390,9 @@ const EventsPageContent = () => {
                           event.event_image_url ||
                           process.env.NEXT_PUBLIC_EVENT_IMAGE_PLACEHOLDER_URL!
                         }
+                        isArchived={Boolean(event.is_archived)}
+                        onArchiveToggle={handleToggleArchive}
+                        isArchiveLoading={archiveUpdatingIds.has(event.event_id)}
                       />
                     </div>
                   ))}

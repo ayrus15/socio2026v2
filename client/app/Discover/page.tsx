@@ -11,6 +11,8 @@ import Footer from "../_components/Home/Footer";
 import { getFests } from "@/lib/api";
 import { allCentres } from "../lib/centresData";
 import { christCampuses } from "../lib/eventFormSchema";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
 
 import {
   useEvents,
@@ -58,12 +60,14 @@ const DiscoverPageContent = () => {
   const searchParams = useSearchParams();
   const router = useRouter();
   const campusParam = searchParams.get("campus");
+  const [archiveUpdatingIds, setArchiveUpdatingIds] = useState<Set<string>>(new Set());
 
   const {
     isLoading: isLoadingEventsFromContext,
     error: errorEventsFromContext,
     allEvents,
   } = useEvents();
+  const { authToken } = useAuth();
 
   const [selectedCampus, setSelectedCampus] = useState(DEFAULT_DISCOVER_CAMPUS);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -172,6 +176,48 @@ const DiscoverPageContent = () => {
     image: centre.image,
     slug: centre.slug,
   }));
+
+  const handleToggleArchive = async (eventId: string, shouldArchive: boolean) => {
+    if (!authToken) {
+      toast.error("Please sign in again to update archive status.");
+      return;
+    }
+
+    setArchiveUpdatingIds((prev) => {
+      const next = new Set(prev);
+      next.add(eventId);
+      return next;
+    });
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/api/events/${eventId}/archive`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ archive: shouldArchive }),
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to update archive status.");
+      }
+
+      toast.success(shouldArchive ? "Event archived successfully." : "Event moved back to active list.");
+    } catch (error: any) {
+      console.error("Archive update failed:", error);
+      toast.error(error?.message || "Unable to update archive status.");
+    } finally {
+      setArchiveUpdatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(eventId);
+        return next;
+      });
+    }
+  };
 
   useEffect(() => {
     const campusFromUrl =
@@ -334,6 +380,8 @@ const DiscoverPageContent = () => {
                   title="Trending events"
                   events={campusTrendingEvents}
                   baseUrl="event"
+                  onArchiveToggle={handleToggleArchive}
+                  archiveLoadingIds={archiveUpdatingIds}
                 />
               ) : (
                 <div className="my-8 p-6 bg-gray-50 rounded-lg text-center text-gray-500">
@@ -417,12 +465,14 @@ const DiscoverPageContent = () => {
                 events={campusUpcomingEvents}
                 showAll={false}
                 baseUrl="event"
+                onArchiveToggle={handleToggleArchive}
+                archiveLoadingIds={archiveUpdatingIds}
               />
             ) : (
-              <div className="my-8 p-6 bg-gray-50 rounded-lg text-center text-gray-500">
-                No upcoming events found for {selectedCampus}.
-              </div>
-            )}
+                <div className="my-8 p-6 bg-gray-50 rounded-lg text-center text-gray-500">
+                  No upcoming events found for {selectedCampus}.
+                </div>
+              )}
           </>
         )}
       </main>

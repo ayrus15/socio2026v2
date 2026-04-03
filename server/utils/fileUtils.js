@@ -105,6 +105,8 @@ export async function uploadFileToSupabase(file, bucketName, eventIdForPath) {
   const safePrefix = eventIdForPath ? `${eventIdForPath}_` : "asset_";
   const fileName = `${safePrefix}${uuidv4()}${fileExtension}`;
 
+  console.log(`🔼 Uploading to Supabase: ${bucketName}/${fileName}`);
+
   const { error: uploadError } = await supabase.storage
     .from(bucketName)
     .upload(fileName, file.buffer, {
@@ -114,17 +116,24 @@ export async function uploadFileToSupabase(file, bucketName, eventIdForPath) {
     });
 
   if (uploadError) {
+    console.error(`❌ Supabase upload error:`, uploadError);
     throw new Error(`Supabase upload failed: ${uploadError.message}`);
   }
 
+  console.log(`✅ File uploaded: ${fileName}`);
+
+  // Get the public URL
   const { data: publicUrlData } = supabase.storage
     .from(bucketName)
     .getPublicUrl(fileName);
 
   const publicUrl = publicUrlData?.publicUrl;
+  
   if (!publicUrl) {
+    console.error(`❌ Failed to generate public URL for ${fileName}`);
     throw new Error("Unable to generate public URL for uploaded file");
   }
 
+  console.log(`✅ Public URL generated: ${publicUrl}`);
   return { publicUrl, path: fileName };
 }

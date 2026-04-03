@@ -31,9 +31,7 @@ for row_idx in range(5, ws.max_row + 1):
     
     courses_by_dept[dept_clean]['courses'][course_full].append({
         'class': class_name,
-        'term': term_number,
-        'room': room_no,
-        'block': block
+        'term': term_number
     })
 
 # Generate SQL INSERT statements with proper escaping
@@ -47,7 +45,7 @@ for dept_name, dept_data in sorted(courses_by_dept.items()):
     school_escaped = school.replace("'", "''")
     courses_escaped = courses_json.replace("'", "''")
     
-    sql = f"INSERT INTO public.departments_courses (department_name, school, courses_json) VALUES (E'{dept_name_escaped}', E'{school_escaped}', '{courses_escaped}'::jsonb);"
+    sql = f"INSERT INTO public.departments_courses (department_name, school, courses_json) VALUES (E'{dept_name_escaped}', E'{school_escaped}', '{courses_escaped}'::jsonb) ON CONFLICT DO NOTHING;"
     sql_inserts.append(sql)
 
 # Write to file

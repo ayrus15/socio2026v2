@@ -14,6 +14,7 @@ export interface EventForCard {
   image: string;
   organizing_dept: string;
   allow_outsiders?: boolean | null;
+  is_archived?: boolean | null;
 }
 
 export interface CarouselDisplayImage {
@@ -205,6 +206,7 @@ const toEventCard = (event: FetchedEvent): EventForCard => {
       process.env.NEXT_PUBLIC_EVENT_IMAGE_PLACEHOLDER_URL!,
     organizing_dept: event.organizing_dept || "TBD",
     allow_outsiders: event.allow_outsiders ?? false,
+    is_archived: event.is_archived,
   };
 };
 

@@ -24,6 +24,25 @@ import { pushEventToGated, shouldPushEventToGated, isGatedEnabled } from "../uti
 const router = express.Router();
 const debugRoutesEnabled = process.env.NODE_ENV !== "production";
 
+// HEALTH CHECK - Verify Supabase connection
+router.get("/debug/health", async (req, res) => {
+  try {
+    const result = await queryOne("events", { where: { event_id: "test" } });
+    return res.json({
+      status: "ok",
+      supabase: "connected",
+      message: "✅ Supabase connection is working"
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      supabase: "disconnected",
+      message: "❌ Supabase connection failed",
+      error: error.message
+    });
+  }
+});
+
 // DIAGNOSTIC ENDPOINT - Check authentication and organiser status
 if (debugRoutesEnabled) {
   router.get("/debug/status", 
@@ -663,23 +682,54 @@ router.put(
         pdf: event.pdf_url,
       };
 
+      console.log("📁 Initial file paths from existing event:");
+      console.log(`  image: ${uploadedFilePaths.image}`);
+      console.log(`  banner: ${uploadedFilePaths.banner}`);
+      console.log(`  pdf: ${uploadedFilePaths.pdf}`);
+
       // Handle file uploads if new files are provided
-      if (files?.eventImage && files.eventImage[0]) {
-        // Delete old image if exists (optional extended feature: strictly clean up old files)
-        // Here we just overwrite the reference
-        const result = await uploadFileToSupabase(files.eventImage[0], "event-images", eventId);
-        uploadedFilePaths.image = result?.publicUrl || null;
+      try {
+        if (files?.eventImage && files.eventImage[0]) {
+          console.log(`📤 Uploading new event image: ${files.eventImage[0].originalname}`);
+          const result = await uploadFileToSupabase(files.eventImage[0], "event-images", eventId);
+          if (result?.publicUrl) {
+            console.log(`✅ Event image uploaded successfully: ${result.publicUrl}`);
+            uploadedFilePaths.image = result.publicUrl;
+          } else {
+            console.warn(`⚠️ Event image upload returned no URL - keeping existing image`);
+          }
+        }
+
+        if (files?.bannerImage && files.bannerImage[0]) {
+          console.log(`📤 Uploading new banner image: ${files.bannerImage[0].originalname}`);
+          const result = await uploadFileToSupabase(files.bannerImage[0], "event-banners", eventId);
+          if (result?.publicUrl) {
+            console.log(`✅ Banner image uploaded successfully: ${result.publicUrl}`);
+            uploadedFilePaths.banner = result.publicUrl;
+          } else {
+            console.warn(`⚠️ Banner image upload returned no URL - keeping existing banner`);
+          }
+        }
+        
+        if (files?.pdfFile && files.pdfFile[0]) {
+          console.log(`📤 Uploading new PDF: ${files.pdfFile[0].originalname}`);
+          const result = await uploadFileToSupabase(files.pdfFile[0], "event-pdfs", eventId);
+          if (result?.publicUrl) {
+            console.log(`✅ PDF uploaded successfully: ${result.publicUrl}`);
+            uploadedFilePaths.pdf = result.publicUrl;
+          } else {
+            console.warn(`⚠️ PDF upload returned no URL - keeping existing PDF`);
+          }
+        }
+      } catch (fileError) {
+        console.error("❌ File upload error during event update:", fileError.message);
+        throw fileError; // Re-throw to be caught by main try-catch
       }
 
-      if (files?.bannerImage && files.bannerImage[0]) {
-        const result = await uploadFileToSupabase(files.bannerImage[0], "event-banners", eventId);
-        uploadedFilePaths.banner = result?.publicUrl || null;
-      }
-      
-      if (files?.pdfFile && files.pdfFile[0]) {
-        const result = await uploadFileToSupabase(files.pdfFile[0], "event-pdfs", eventId);
-        uploadedFilePaths.pdf = result?.publicUrl || null;
-      }
+      console.log("📁 Updated file paths after upload:");
+      console.log(`  image: ${uploadedFilePaths.image}`);
+      console.log(`  banner: ${uploadedFilePaths.banner}`);
+      console.log(`  pdf: ${uploadedFilePaths.pdf}`);
 
       const {
         title,
@@ -741,8 +791,8 @@ router.put(
       const parsedCustomFields = parseJsonField(req.body.custom_fields, []);
 
       // Prepare update payload
+      // Note: Only include event_id if it's NOT changing (to avoid primary key update issues)
       const updateData = {
-        event_id: newEventId, // Include new event_id (will be same as old if title didn't change)
         title: title.trim(),
         description: description || null,
         event_date: event_date || null,
@@ -776,9 +826,13 @@ router.put(
         allowed_campuses: Array.isArray(req.body.allowed_campuses)
           ? req.body.allowed_campuses
           : parseJsonField(req.body.allowed_campuses, []),
-        updated_at: new Date().toISOString(),
-        updated_by: req.userInfo.email
+        updated_at: new Date().toISOString()
       };
+
+      console.log("🔄 UPDATE DATA - File URLs being saved to database:");
+      console.log(`  event_image_url: ${updateData.event_image_url}`);
+      console.log(`  banner_url: ${updateData.banner_url}`);
+      console.log(`  pdf_url: ${updateData.pdf_url}`);
 
       // If event_id changed, update related records first
       if (newEventId !== eventId) {
@@ -812,6 +866,14 @@ router.put(
       }
 
       const updated = await update("events", updateData, { event_id: eventId });
+
+      console.log("💾 Database update result:");
+      if (updated && updated.length > 0) {
+        console.log(`✅ Event updated successfully`);
+        console.log(`  Saved image URL: ${updated[0].event_image_url}`);
+        console.log(`  Saved banner URL: ${updated[0].banner_url}`);
+        console.log(`  Saved PDF URL: ${updated[0].pdf_url}`);
+      }
 
       if (!updated || updated.length === 0) {
         console.warn("⚠️ Update query returned no data, fetching event from database...");
@@ -894,8 +956,16 @@ router.put(
         userId: req.userId,
         userEmail: req.userInfo?.email,
         isOrganiser: req.userInfo?.is_organiser,
-        eventId: req.params.eventId
+        eventId: req.params.eventId,
+        supabaseError: error.status || error.statusCode || "N/A",
+        errorType: error.constructor.name
       });
+      
+      // More detailed logging for debugging
+      if (error.message && error.message.includes('Supabase')) {
+        console.error("🔴 Supabase-specific error detected - checking connectivity...");
+      }
+      
       return res.status(500).json({ 
         error: "Internal server error while updating event.",
         details: error.message,

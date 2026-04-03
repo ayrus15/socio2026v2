@@ -36,6 +36,12 @@ export async function initializeDatabase() {
   }
 }
 
+// DEBUG: Log Supabase connection status
+if (!supabaseServiceKey) {
+  console.warn('⚠️ WARNING: SUPABASE_SERVICE_ROLE_KEY not loaded from environment. Using fallback.');
+  console.warn('This will cause authentication failures on all database operations!');
+}
+
 // Helper function to execute queries - returns all rows
 export async function queryAll(table, options = {}) {
   let query = supabase.from(table).select(options.select || '*');
@@ -98,6 +104,10 @@ export async function insert(table, data) {
 
 // Helper function to update data
 export async function update(table, data, where) {
+  console.log(`📝 Executing UPDATE on table "${table}"`);
+  console.log(`   WHERE: ${JSON.stringify(where)}`);
+  console.log(`   DATA fields: ${Object.keys(data).join(', ')}`);
+  
   let query = supabase.from(table).update(data);
   
   for (const [key, value] of Object.entries(where)) {
@@ -107,7 +117,14 @@ export async function update(table, data, where) {
   const { data: result, error } = await query.select();
   
   if (error) {
+    console.error(`❌ UPDATE ERROR on ${table}:`, error);
     throw error;
+  }
+  
+  if (!result || result.length === 0) {
+    console.warn(`⚠️ UPDATE returned empty result for ${table}`);
+  } else {
+    console.log(`✅ UPDATE successful: ${result.length} row(s) affected`);
   }
   
   return result;

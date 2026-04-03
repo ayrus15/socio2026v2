@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { EventCard } from "../Discover/EventCard";
 import Link from "next/link";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
 import {
   useEvents,
   EventForCard as ContextEventForCard,
@@ -12,11 +14,55 @@ import {
 
 const UpcomingEvents = () => {
   const eventsRef = useRef<HTMLDivElement>(null);
+  const [archiveUpdatingIds, setArchiveUpdatingIds] = useState<Set<string>>(new Set());
   const {
     upcomingEvents,
     isLoading: isLoadingContext,
     error: errorContext,
   } = useEvents();
+  const { authToken } = useAuth();
+
+  const handleToggleArchive = async (eventId: string, shouldArchive: boolean) => {
+    if (!authToken) {
+      toast.error("Please sign in again to update archive status.");
+      return;
+    }
+
+    setArchiveUpdatingIds((prev) => {
+      const next = new Set(prev);
+      next.add(eventId);
+      return next;
+    });
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/api/events/${eventId}/archive`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ archive: shouldArchive }),
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to update archive status.");
+      }
+
+      toast.success(shouldArchive ? "Event archived successfully." : "Event moved back to active list.");
+    } catch (error: any) {
+      console.error("Archive update failed:", error);
+      toast.error(error?.message || "Unable to update archive status.");
+    } finally {
+      setArchiveUpdatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(eventId);
+        return next;
+      });
+    }
+  };
 
   useEffect(() => {
     if (isLoadingContext || upcomingEvents.length === 0) return;
@@ -120,6 +166,9 @@ const UpcomingEvents = () => {
             tags: event.tags.slice(0, 4),
             image: event.image,
             idForLink: String(event.event_id),
+            isArchived: Boolean(event.is_archived),
+            onArchiveToggle: handleToggleArchive,
+            isArchiveLoading: archiveUpdatingIds.has(String(event.event_id)),
           };
 
           return (
