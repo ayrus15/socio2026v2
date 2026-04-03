@@ -454,7 +454,7 @@ router.post(
         whatsapp_invite_link: req.body.whatsapp_invite_link || null,
         organizing_dept: organizing_dept || null,
         fest_id: fest || null,
-        created_by: req.body.created_by || req.userInfo?.email || req.userId,
+        created_by: req.userInfo?.email,
         auth_uuid: req.userId,
         registration_deadline: req.body.registration_deadline || null,
         total_participants: 0,
@@ -811,12 +811,51 @@ router.put(
       const updated = await update("events", updateData, { event_id: eventId });
 
       if (!updated || updated.length === 0) {
-        throw new Error("Event update failed.");
+        console.warn("⚠️ Update query returned no data, fetching event from database...");
+        try {
+          const refetchedEvent = await queryOne("events", { where: { event_id: eventId } });
+          if (!refetchedEvent) {
+            throw new Error("Could not fetch updated event after update");
+          }
+          console.log(`✅ Event updated and refetched successfully: ${eventId}`);
+          
+          // Push to UniversityGated if outsiders were enabled/changed (non-blocking)
+          if (isGatedEnabled()) {
+            shouldPushEventToGated(refetchedEvent, queryOne).then(async (shouldPush) => {
+              if (shouldPush) {
+                try {
+                  await pushEventToGated(
+                    refetchedEvent,
+                    req.userInfo?.email || req.body.organizer_email,
+                    req.userInfo?.name || 'SOCIO Organiser'
+                  );
+                  console.log(`✅ Pushed updated event "${refetchedEvent.title}" to UniversityGated`);
+                } catch (gatedError) {
+                  console.error(`❌ Failed to push updated event to Gated:`, gatedError.message);
+                }
+              }
+            }).catch((err) => {
+              console.error('❌ Error checking Gated push eligibility on update:', err.message);
+            });
+          }
+
+          return res.status(200).json({ 
+            message: "Event updated successfully", 
+            event: refetchedEvent,
+            event_id: newEventId,
+            id_changed: newEventId !== eventId
+          });
+        } catch (refetchError) {
+          console.error("❌ Failed to refetch event after update:", refetchError.message);
+          throw new Error("Event update failed - could not verify update");
+        }
       }
+
+      // At this point, updated is guaranteed to have data (either from update or refetch)
+      const updatedEvent = updated[0];
 
       // Push to UniversityGated if outsiders were enabled/changed (non-blocking)
       if (isGatedEnabled()) {
-        const updatedEvent = updated[0];
         shouldPushEventToGated(updatedEvent, queryOne).then(async (shouldPush) => {
           if (shouldPush) {
             try {
@@ -837,7 +876,7 @@ router.put(
 
       return res.status(200).json({ 
         message: "Event updated successfully", 
-        event: updated[0],
+        event: updatedEvent,
         event_id: newEventId,
         id_changed: newEventId !== eventId
       });

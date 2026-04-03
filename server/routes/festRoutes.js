@@ -287,7 +287,7 @@ router.post(
         contact_email: festData.contactEmail || festData.contact_email || "",
         contact_phone: festData.contactPhone || festData.contact_phone || "",
         event_heads: festData.eventHeads || festData.event_heads || [],
-        created_by: festData.createdBy || festData.created_by || req.userInfo?.email || req.userId,
+        created_by: req.userInfo?.email,
         auth_uuid: req.userId,
         // New enhanced fest fields
         venue: festData.venue || null,
@@ -429,6 +429,9 @@ router.put(
       }
 
       updatePayload.updated_at = new Date().toISOString();
+      
+      console.log(`[Fest Update] Payload for ${festId}:`, JSON.stringify(updatePayload, null, 2));
+      console.log(`[Fest Update] Using table: ${festTable}`);
 
       if (titleChanged) {
         try {
@@ -448,15 +451,36 @@ router.put(
         } catch (eventsError) { }
       }
 
-      const updated = await update(festTable, updatePayload, { fest_id: festId });
-      const updatedFest = updated?.[0];
+      const updated = await update(festTable, updatePayload, { fest_id: festId }).catch(async (updateError) => {
+        console.error("[Fest Update ERROR] Supabase update failed:", {
+          errorMessage: updateError.message,
+          errorCode: updateError.code,
+          errorDetails: JSON.stringify(updateError, null, 2),
+          tableName: festTable,
+          festId: festId,
+          payloadKeys: Object.keys(updatePayload)
+        });
+        throw updateError;
+      });
       
+      let updatedFest = updated?.[0];
+      
+      // If update didn't return data, try fetching the updated fest
       if (!updatedFest) {
-        console.error("❌ Update query returned no data. Updated:", updated);
-        throw new Error("Fest update failed - no data returned from database");
+        console.warn("⚠️ Update query returned no data, fetching fest from database...");
+        try {
+          updatedFest = await queryOne(festTable, { where: { fest_id: festId } });
+          if (!updatedFest) {
+            throw new Error("Could not fetch updated fest after update");
+          }
+          console.log(`✅ Fest updated and refetched successfully: ${festId}`);
+        } catch (refetchError) {
+          console.error("❌ Failed to refetch fest after update:", refetchError.message);
+          throw new Error("Fest update failed - could not verify update");
+        }
+      } else {
+        console.log(`✅ Fest updated successfully: ${festId}`);
       }
-      
-      console.log(`✅ Fest updated successfully: ${festId}`);
 
       // Push to UniversityGated if outsiders are now enabled (non-blocking)
       if (isGatedEnabled() && updatedFest) {
