@@ -9,12 +9,10 @@ import {
   useWatch,
   Control,
 } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
 
 import {
   EventFormData,
-  eventFormSchema,
   departments as departmentOptions,
   categories as categoryOptions,
   festEvents as festEventOptions,
@@ -771,7 +769,7 @@ export default function EventForm({
     watch,
     reset,
   } = useForm<EventFormData>({
-    // resolver: zodResolver(eventFormSchema), // Temporarily disabled for build
+    // Schema resolver can be re-enabled later if validation is restored here.
     defaultValues: {
       eventTitle: "",
       eventDate: "",

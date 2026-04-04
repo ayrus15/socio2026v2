@@ -2070,13 +2070,6 @@ function CreateFestForm(props?: CreateFestProps) {
                     </div>
                   </div>
 
-                  {/* Allow Outsiders Toggle */}
-                  <div className="border border-gray-200 rounded-lg p-5 bg-gray-50 mb-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-sm font-bold text-[#063168] uppercase tracking-wide">
-                          Allow Outsider Registrations
-
                   <div className="mb-6">
                     <CustomDateInput
                       id="registration_deadline"
