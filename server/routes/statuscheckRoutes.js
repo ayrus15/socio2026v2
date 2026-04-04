@@ -11,7 +11,6 @@ import {
   authenticateUser,
   getUserInfo,
   checkRoleExpiration,
-  requireMasterAdmin,
 } from "../middleware/authMiddleware.js";
 import { getFestTableForDatabase } from "../utils/festTableResolver.js";
 
@@ -74,7 +73,22 @@ const ROUTE_GROUP_COVERAGE = [
   },
 ];
 
-router.use(authenticateUser, getUserInfo(), checkRoleExpiration, requireMasterAdmin);
+router.use(
+  authenticateUser,
+  getUserInfo(),
+  checkRoleExpiration,
+  (req, res, next) => {
+    const canAccessStatuscheck = Boolean(req.userInfo?.is_masteradmin || req.userInfo?.is_organiser);
+
+    if (!canAccessStatuscheck) {
+      return res.status(403).json({
+        error: "Access denied: organiser or masteradmin privileges required",
+      });
+    }
+
+    return next();
+  }
+);
 
 function clampNumber(value, min, max, fallback) {
   const parsed = Number(value);

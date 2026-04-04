@@ -76,9 +76,7 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith("/create") ||
     pathname.startsWith("/edit");
 
-  const isStatuscheckRoute = pathname.startsWith("/statuscheck");
-
-  if (user && (isManagementRoute || isStatuscheckRoute)) {
+  if (user && isManagementRoute) {
     if (!user.email) {
       return redirect("/error");
     }
@@ -90,11 +88,6 @@ export async function middleware(req: NextRequest) {
       .single();
 
     const canManage = Boolean(userData?.is_organiser) || Boolean(userData?.is_masteradmin);
-    const canAccessStatuscheck = Boolean(userData?.is_masteradmin);
-
-    if (isStatuscheckRoute && (error || !userData || !canAccessStatuscheck)) {
-      return redirect("/error");
-    }
 
     if (isManagementRoute && (error || !userData || !canManage)) {
       return redirect("/error");

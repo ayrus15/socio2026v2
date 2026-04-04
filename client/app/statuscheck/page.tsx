@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import supabase from "@/lib/supabaseClient";
 import toast from "react-hot-toast";
 import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import {
@@ -200,6 +201,12 @@ function downloadJsonFile(fileName: string, payload: unknown) {
   URL.revokeObjectURL(url);
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 function Badge({ ok, status }: { ok: boolean; status?: number | string }) {
   if (String(status) === "skipped") {
     return (
@@ -320,7 +327,8 @@ function collectIssues(runResult: RunResponse | null): IssueItem[] {
 
 export default function StatusCheckPage() {
   const router = useRouter();
-  const { isLoading: authLoading, isMasterAdmin, session } = useAuth();
+  const { isLoading: authLoading, isMasterAdmin, session, userData } = useAuth();
+  const verifyInProgressRef = useRef(false);
 
   const authToken = session?.access_token || null;
 
@@ -346,6 +354,9 @@ export default function StatusCheckPage() {
   const [customPath, setCustomPath] = useState("");
   const [iterations, setIterations] = useState(30);
   const [concurrency, setConcurrency] = useState(4);
+  const [verificationPhase, setVerificationPhase] = useState<"checking" | "welcome" | "ready" | "failed">("checking");
+  const [verificationAttempt, setVerificationAttempt] = useState(0);
+  const [verificationMessage, setVerificationMessage] = useState("Checking auth/verify/status...");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -375,10 +386,122 @@ export default function StatusCheckPage() {
       return;
     }
 
-    if (!isMasterAdmin) {
-      router.replace("/error");
+    if (verificationPhase === "ready" || verificationPhase === "failed" || verifyInProgressRef.current) {
+      return;
     }
-  }, [authLoading, session, isMasterAdmin, router]);
+
+    let cancelled = false;
+
+    const verifyAccess = async () => {
+      verifyInProgressRef.current = true;
+
+      try {
+        const sessionEmail = session.user?.email || userData?.email || "";
+
+        if (!sessionEmail) {
+          setVerificationMessage("Missing user email in session");
+          setVerificationPhase("failed");
+          await wait(600);
+          if (!cancelled) {
+            router.replace("/error");
+          }
+          return;
+        }
+
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          if (cancelled) return;
+
+          setVerificationAttempt(attempt);
+          setVerificationPhase("checking");
+          setVerificationMessage(`Verifying developer access (attempt ${attempt}/3)...`);
+
+          const hasRoleInContext = Boolean(userData?.is_organiser || userData?.is_masteradmin || isMasterAdmin);
+          if (hasRoleInContext) {
+            setVerificationPhase("welcome");
+            setVerificationMessage("Welcome developer!");
+            await wait(800);
+            if (!cancelled) {
+              setVerificationPhase("ready");
+            }
+            return;
+          }
+
+          try {
+            const userLookupResponse = await fetch(
+              `${API_URL}/api/users/${encodeURIComponent(sessionEmail)}`,
+              {
+                method: "GET",
+                headers: {
+                  Accept: "application/json",
+                  ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+                },
+              }
+            );
+
+            if (userLookupResponse.ok) {
+              const payload = await userLookupResponse.json();
+              const fetchedUser = payload?.user;
+              const canAccessFromFetch = Boolean(fetchedUser?.is_organiser || fetchedUser?.is_masteradmin);
+
+              if (canAccessFromFetch) {
+                setVerificationPhase("welcome");
+                setVerificationMessage("Welcome developer!");
+                await wait(800);
+                if (!cancelled) {
+                  setVerificationPhase("ready");
+                }
+                return;
+              }
+            }
+          } catch (_error) {
+            // Retry path handles transient fetch/network issues.
+          }
+
+          try {
+            const { data: roleRow, error: roleError } = await supabase
+              .from("users")
+              .select("is_organiser, is_masteradmin")
+              .eq("email", sessionEmail)
+              .maybeSingle();
+
+            if (!roleError) {
+              const canAccessFromSupabase = Boolean(roleRow?.is_organiser || roleRow?.is_masteradmin);
+              if (canAccessFromSupabase) {
+                setVerificationPhase("welcome");
+                setVerificationMessage("Welcome developer!");
+                await wait(800);
+                if (!cancelled) {
+                  setVerificationPhase("ready");
+                }
+                return;
+              }
+            }
+          } catch (_error) {
+            // Keep retrying; failures here should not crash page boot.
+          }
+
+          if (attempt < 3) {
+            await wait(600);
+          }
+        }
+
+        setVerificationPhase("failed");
+        setVerificationMessage("Could not verify organiser/masteradmin access. Redirecting...");
+        await wait(700);
+        if (!cancelled) {
+          router.replace("/error");
+        }
+      } finally {
+        verifyInProgressRef.current = false;
+      }
+    };
+
+    void verifyAccess();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, session, userData, authToken, isMasterAdmin, router, verificationPhase]);
 
   const headers = useMemo(() => {
     if (!authToken) return null;
@@ -553,19 +676,19 @@ export default function StatusCheckPage() {
   }, [headers, loadTarget, customPath, iterations, concurrency, appendHistory]);
 
   useEffect(() => {
-    if (!isMasterAdmin || !headers) return;
+    if (verificationPhase !== "ready" || !headers) return;
     void fetchSummary({ silent: true });
-  }, [isMasterAdmin, headers, fetchSummary]);
+  }, [verificationPhase, headers, fetchSummary]);
 
   useEffect(() => {
-    if (!autoRefreshSummary || !headers || !isMasterAdmin) return;
+    if (!autoRefreshSummary || !headers || verificationPhase !== "ready") return;
 
     const timer = window.setInterval(() => {
       void fetchSummary({ silent: true });
     }, 45000);
 
     return () => window.clearInterval(timer);
-  }, [autoRefreshSummary, headers, isMasterAdmin, fetchSummary]);
+  }, [autoRefreshSummary, headers, verificationPhase, fetchSummary]);
 
   const apiBaseForTools = useMemo(() => {
     if (summary?.apiBaseUrl) return summary.apiBaseUrl;
@@ -627,19 +750,37 @@ export default function StatusCheckPage() {
     toast.success("Snapshot exported");
   }, [summary, runResult, loadResult, issues, history]);
 
-  if (authLoading || !authToken) {
+  if (authLoading || !authToken || verificationPhase === "checking" || verificationPhase === "welcome") {
     return (
       <div className={cn("min-h-screen p-8", headingFont.className)}>
         <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_10%_5%,_#dbeafe_0%,_#eef2ff_45%,_#f8fafc_100%)]" />
         <div className="mx-auto max-w-4xl rounded-3xl border border-slate-200 bg-white/85 p-10 text-center shadow-[0_20px_50px_-30px_rgba(21,76,179,0.65)] backdrop-blur-sm">
-          <RefreshCw className="mx-auto h-10 w-10 animate-spin text-[#154CB3]" />
-          <p className="mt-3 text-slate-600">Loading the developer command center...</p>
+          <RefreshCw className={cn("mx-auto h-10 w-10 text-[#154CB3]", verificationPhase === "checking" && "animate-spin")} />
+          <p className="mt-3 text-lg font-semibold text-slate-800">
+            {verificationPhase === "welcome" ? "Welcome developer!" : "Verifying developer access"}
+          </p>
+          <p className="mt-1 text-sm text-slate-600">{verificationMessage}</p>
+          {verificationPhase === "checking" && verificationAttempt > 0 && (
+            <p className="mt-1 text-xs text-slate-500">Attempt {verificationAttempt} of 3</p>
+          )}
         </div>
       </div>
     );
   }
 
-  if (!isMasterAdmin) {
+  if (verificationPhase === "failed") {
+    return (
+      <div className={cn("min-h-screen p-8", headingFont.className)}>
+        <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_10%_5%,_#dbeafe_0%,_#eef2ff_45%,_#f8fafc_100%)]" />
+        <div className="mx-auto max-w-4xl rounded-3xl border border-rose-200 bg-white/90 p-10 text-center shadow-[0_20px_50px_-30px_rgba(225,29,72,0.35)] backdrop-blur-sm">
+          <p className="text-lg font-semibold text-rose-700">Access verification failed</p>
+          <p className="mt-2 text-sm text-slate-600">{verificationMessage}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (verificationPhase !== "ready") {
     return null;
   }
 
@@ -658,7 +799,7 @@ export default function StatusCheckPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
                 <ShieldAlert className="h-3.5 w-3.5" />
-                Masteradmin Zone
+                Admin / Organiser Zone
               </div>
               <h1 className="mt-3 text-3xl font-bold text-slate-900 md:text-4xl">StatusCheck Developer Command Center</h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-600 md:text-base">
