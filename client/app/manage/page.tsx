@@ -68,6 +68,7 @@ const EVENT_STATUS_FILTER_OPTIONS: Array<{ value: StatusFilter; label: string }>
 ];
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!.replace(/\/api\/?$/, "");
+const MANUAL_UNARCHIVE_OVERRIDE = "system:manual_unarchive_override";
 
 const CAMPUSES = [
   "Central Campus (Main)",
@@ -265,11 +266,6 @@ const MappedEventCard = ({
         <p className="text-sm text-slate-500 line-clamp-2">
           {(event as any).short_description || (event as any).description || "No description provided."}
         </p>
-        {isArchived && archiveSource === "auto" && (
-          <p className="text-xs font-semibold text-amber-700 mt-2">
-            Auto-archived after event end date. <span className="text-amber-600">You can still unarchive if needed.</span>
-          </p>
-        )}
       </div>
       <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/50 space-y-2">
         <div className="flex items-center gap-2 text-slate-500 text-sm font-medium">
@@ -349,7 +345,7 @@ export default function ManageDashboard() {
   const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
   const [searchTermReport, setSearchTermReport] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [archiveOverrides, setArchiveOverrides] = useState<Record<string, { is_archived: boolean; archived_at: string | null }>>({});
+  const [archiveOverrides, setArchiveOverrides] = useState<Record<string, { is_archived: boolean; archived_at: string | null; archived_by?: string | null }>>({});
   const [archiveUpdatingIds, setArchiveUpdatingIds] = useState<Set<string>>(new Set());
   const [localArchivedIds, setLocalArchivedIds] = useState<Set<string>>(new Set());
   const [festArchiveOverrides, setFestArchiveOverrides] = useState<Record<string, { is_archived: boolean; archived_at: string | null }>>({});
@@ -573,6 +569,11 @@ export default function ManageDashboard() {
   };
 
   const isAutoArchivedEvent = (event: ContextEvent) => {
+    const archivedBy = String((event as any).archived_by || "").trim().toLowerCase();
+    if (!toBoolean((event as any).is_archived) && archivedBy === MANUAL_UNARCHIVE_OVERRIDE) {
+      return false;
+    }
+
     // Match backend auto-archive logic: archive when event_date is in the past
     // (not after 15 days). If event is manually archived, this won't be called
     // due to getEffectiveArchiveState logic ordering.
@@ -594,9 +595,14 @@ export default function ManageDashboard() {
 
   const getEffectiveArchiveState = (event: ContextEvent): { isArchived: boolean; archiveSource: EventArchiveSource } => {
     const override = archiveOverrides[event.event_id];
-    const manualArchived = override
-      ? override.is_archived
-      : toBoolean(event.is_archived);
+    if (override) {
+      return {
+        isArchived: override.is_archived,
+        archiveSource: override.is_archived ? "manual" : null,
+      };
+    }
+
+    const manualArchived = toBoolean(event.is_archived);
     const autoArchived = isAutoArchivedEvent(event);
 
     if (manualArchived) {
@@ -1007,6 +1013,12 @@ export default function ManageDashboard() {
               : shouldArchive
                 ? new Date().toISOString()
                 : null,
+          archived_by:
+            typeof (event as any)?.archived_by === "string"
+              ? (event as any).archived_by
+              : shouldArchive
+                ? currentUserEmail || null
+                : MANUAL_UNARCHIVE_OVERRIDE,
         },
       }));
 
@@ -1106,6 +1118,7 @@ export default function ManageDashboard() {
             updated[event.event_id] = {
               is_archived: Boolean(shouldArchive),
               archived_at: shouldArchive ? nowIso : null,
+              archived_by: shouldArchive ? currentUserEmail || null : MANUAL_UNARCHIVE_OVERRIDE,
             };
             
             // Also update local archived ids for cascading events

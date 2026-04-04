@@ -23,6 +23,7 @@ import { pushEventToGated, shouldPushEventToGated, isGatedEnabled } from "../uti
 
 const router = express.Router();
 const debugRoutesEnabled = process.env.NODE_ENV !== "production";
+const MANUAL_UNARCHIVE_OVERRIDE = "system:manual_unarchive_override";
 
 // HEALTH CHECK - Verify Supabase connection
 router.get("/debug/health", async (req, res) => {
@@ -122,6 +123,11 @@ const getTodayStart = () => {
 };
 
 const shouldAutoArchiveEvent = (event) => {
+  const archivedBy = String(event?.archived_by || "").trim().toLowerCase();
+  if (archivedBy === MANUAL_UNARCHIVE_OVERRIDE) {
+    return false;
+  }
+
   const parsedEndDate = getValidDate(event?.end_date || event?.event_date);
   if (!parsedEndDate) return false;
 
@@ -727,7 +733,11 @@ router.patch(
         is_archived: archiveValue,
         archived_at: archiveValue ? nowIso : null,
         ...(includeArchivedBy
-          ? { archived_by: archiveValue ? req.userInfo?.email || req.userId || null : null }
+          ? {
+              archived_by: archiveValue
+                ? req.userInfo?.email || req.userId || null
+                : MANUAL_UNARCHIVE_OVERRIDE,
+            }
           : {}),
         updated_at: nowIso,
       });
