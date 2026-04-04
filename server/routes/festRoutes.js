@@ -92,6 +92,7 @@ const isMissingRelationError = (error) => {
 const FEST_TABLE_CANDIDATES = ["fests", "fest"];
 const resolveFestTableCandidates = (primaryTable) =>
   Array.from(new Set([primaryTable, ...FEST_TABLE_CANDIDATES].filter(Boolean)));
+const normalizeFestKey = (value) => String(value || "").trim().toLowerCase();
 
 const getMergedFestsFromCandidates = async (queryOptions, primaryTable) => {
   const tables = resolveFestTableCandidates(primaryTable);
@@ -934,31 +935,88 @@ router.patch(
 
       const updatedFest = updatedFests[0];
 
-      // Also archive/unarchive all events under this fest
-      const eventsToUpdate = await queryAll("events", {
-        where: { fest_id: festId }
+      // Also archive/unarchive all events linked to this fest.
+      // We support both canonical fest_id links and legacy fest-title links.
+      let allEvents = [];
+      try {
+        allEvents = await queryAll("events", { select: "event_id, fest_id, fest" });
+      } catch (error) {
+        if (isMissingRelationError(error)) {
+          allEvents = [];
+        } else if (isMissingColumnError(error)) {
+          try {
+            allEvents = await queryAll("events", { select: "event_id, fest_id" });
+          } catch (fallbackError) {
+            if (isMissingRelationError(fallbackError) || isMissingColumnError(fallbackError)) {
+              allEvents = [];
+            } else {
+              throw fallbackError;
+            }
+          }
+        } else {
+          throw error;
+        }
+      }
+
+      const matchKeys = new Set(
+        [normalizeFestKey(festId), normalizeFestKey(updatedFest?.fest_title)].filter(Boolean)
+      );
+
+      const eventsToUpdate = (allEvents || []).filter((event) => {
+        const matchesByFestId = matchKeys.has(normalizeFestKey(event?.fest_id));
+        const matchesByLegacyFest = Object.prototype.hasOwnProperty.call(event || {}, "fest")
+          ? matchKeys.has(normalizeFestKey(event?.fest))
+          : false;
+
+        return matchesByFestId || matchesByLegacyFest;
       });
 
-      if (eventsToUpdate && eventsToUpdate.length > 0) {
-        await update(
-          "events",
-          {
-            is_archived: archiveValue,
-            archived_at: archiveValue ? nowIso : null,
-            archived_by: archiveValue ? req.userInfo?.email || req.userId || null : null,
-            updated_at: nowIso,
-          },
-          { fest_id: festId }
-        );
-        console.log(`✅ ${archiveValue ? "Archived" : "Unarchived"} ${eventsToUpdate.length} events for fest ${festId}`);
+      let eventsAffected = 0;
+      if (eventsToUpdate.length > 0) {
+        const buildEventArchivePayload = (includeArchivedBy = true) => ({
+          is_archived: archiveValue,
+          archived_at: archiveValue ? nowIso : null,
+          ...(includeArchivedBy
+            ? { archived_by: archiveValue ? req.userInfo?.email || req.userId || null : null }
+            : {}),
+          updated_at: nowIso,
+        });
+
+        for (const event of eventsToUpdate) {
+          const eventId = String(event?.event_id || "").trim();
+          if (!eventId) continue;
+
+          try {
+            const updatedRows = await update("events", buildEventArchivePayload(true), { event_id: eventId });
+            if (Array.isArray(updatedRows) && updatedRows.length > 0) {
+              eventsAffected += 1;
+            }
+            continue;
+          } catch (error) {
+            const code = String(error?.code || "");
+            const message = String(error?.message || "").toLowerCase();
+            const missingArchivedByColumn = code === "42703" && message.includes("archived_by");
+
+            if (!missingArchivedByColumn) {
+              throw error;
+            }
+          }
+
+          const fallbackRows = await update("events", buildEventArchivePayload(false), { event_id: eventId });
+          if (Array.isArray(fallbackRows) && fallbackRows.length > 0) {
+            eventsAffected += 1;
+          }
+        }
+
+        console.log(`✅ ${archiveValue ? "Archived" : "Unarchived"} ${eventsAffected} events for fest ${festId}`);
       }
 
       return res.status(200).json({
         message: archiveValue 
-          ? `Fest and ${eventsToUpdate?.length || 0} associated events archived successfully.` 
+          ? `Fest and ${eventsAffected} associated events archived successfully.` 
           : "Fest and associated events moved back to active list.",
         fest: mapFestResponse(updatedFest),
-        events_affected: eventsToUpdate?.length || 0,
+        events_affected: eventsAffected,
       });
     } catch (error) {
       console.error("Server error PATCH /api/fests/:festId/archive:", error);
