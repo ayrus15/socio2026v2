@@ -105,6 +105,27 @@ const getMergedFestsFromCandidates = async (queryOptions, primaryTable) => {
       if (isMissingRelationError(error)) {
         continue;
       }
+
+      // Legacy table variants may not support newer filter/order columns.
+      if (isMissingColumnError(error)) {
+        try {
+          const fallbackRows = await queryAll(tableName, { select: "*" });
+          for (const fest of fallbackRows || []) {
+            const key = String(fest?.fest_id || "").trim();
+            if (!key) continue;
+            if (!festById.has(key)) {
+              festById.set(key, fest);
+            }
+          }
+          continue;
+        } catch (fallbackError) {
+          if (isMissingRelationError(fallbackError) || isMissingColumnError(fallbackError)) {
+            continue;
+          }
+          throw fallbackError;
+        }
+      }
+
       throw error;
     }
   }
