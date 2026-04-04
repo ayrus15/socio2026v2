@@ -10,6 +10,7 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  CircleHelp,
   Clock3,
   Copy,
   Download,
@@ -24,6 +25,18 @@ import {
   TerminalSquare,
   Wrench,
 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -39,6 +52,10 @@ const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/api\/?$/, "")
 const MUTATION_CONFIRMATION_PHRASE = "I UNDERSTAND STATUSCHECK MUTATIONS";
 const HISTORY_STORAGE_KEY = "statuscheck:history:v2";
 const SLOW_CHECK_THRESHOLD_MS = 1200;
+const VERIFY_ATTEMPT_TIMEOUT_MS = 1500;
+const VERIFY_RETRY_DELAY_MS = 180;
+const VERIFY_WELCOME_DELAY_MS = 220;
+const VERIFY_FAIL_REDIRECT_DELAY_MS = 250;
 const LOAD_PRESETS = [
   {
     id: "smoke",
@@ -261,6 +278,35 @@ function wait(ms: number) {
   });
 }
 
+async function fetchJsonWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<{ ok: boolean; status: number; data: any | null }> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const text = await response.text();
+    let data: any | null = null;
+
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (_error) {
+        data = null;
+      }
+    }
+
+    return { ok: response.ok, status: response.status, data };
+  } catch (_error) {
+    return { ok: false, status: 0, data: null };
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 function Badge({ ok, status }: { ok: boolean; status?: number | string }) {
   if (String(status) === "skipped") {
     return (
@@ -281,6 +327,17 @@ function Badge({ ok, status }: { ok: boolean; status?: number | string }) {
     >
       {ok ? "Pass" : "Fail"}
       {typeof status === "number" ? ` (${status})` : ""}
+    </span>
+  );
+}
+
+function HelpTip({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex items-center">
+      <CircleHelp className="h-3.5 w-3.5 text-slate-500" />
+      <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-64 -translate-x-1/2 rounded-md border border-slate-300 bg-slate-900 px-2 py-1.5 text-[11px] text-slate-100 opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+        {text}
+      </span>
     </span>
   );
 }
@@ -459,7 +516,7 @@ export default function StatusCheckPage() {
         if (!sessionEmail) {
           setVerificationMessage("Missing user email in session");
           setVerificationPhase("failed");
-          await wait(600);
+          await wait(VERIFY_FAIL_REDIRECT_DELAY_MS);
           if (!cancelled) {
             router.replace("/error");
           }
@@ -471,81 +528,76 @@ export default function StatusCheckPage() {
 
           setVerificationAttempt(attempt);
           setVerificationPhase("checking");
-          setVerificationMessage(`Verifying developer access (attempt ${attempt}/3)...`);
+          setVerificationMessage(`Checking organiser/admin permissions (${attempt}/3)...`);
 
           const hasRoleInContext = Boolean(userData?.is_organiser || userData?.is_masteradmin || isMasterAdmin);
           if (hasRoleInContext) {
             setVerificationPhase("welcome");
-            setVerificationMessage("Welcome developer!");
-            await wait(800);
+            await wait(VERIFY_WELCOME_DELAY_MS);
             if (!cancelled) {
               setVerificationPhase("ready");
             }
             return;
           }
 
-          try {
-            const userLookupResponse = await fetch(
-              `${API_URL}/api/users/${encodeURIComponent(sessionEmail)}`,
-              {
-                method: "GET",
-                headers: {
-                  Accept: "application/json",
-                  ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          const [apiRoleResult, supabaseRoleResult] = await Promise.all([
+            (async () => {
+              const result = await fetchJsonWithTimeout(
+                `${API_URL}/api/users/${encodeURIComponent(sessionEmail)}`,
+                {
+                  method: "GET",
+                  headers: {
+                    Accept: "application/json",
+                    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+                  },
                 },
-              }
-            );
+                VERIFY_ATTEMPT_TIMEOUT_MS
+              );
 
-            if (userLookupResponse.ok) {
-              const payload = await userLookupResponse.json();
-              const fetchedUser = payload?.user;
-              const canAccessFromFetch = Boolean(fetchedUser?.is_organiser || fetchedUser?.is_masteradmin);
+              const fetchedUser = result.data?.user;
+              return Boolean(result.ok && (fetchedUser?.is_organiser || fetchedUser?.is_masteradmin));
+            })(),
+            (async () => {
+              try {
+                const roleQuery = supabase
+                  .from("users")
+                  .select("is_organiser, is_masteradmin")
+                  .eq("email", sessionEmail)
+                  .maybeSingle();
 
-              if (canAccessFromFetch) {
-                setVerificationPhase("welcome");
-                setVerificationMessage("Welcome developer!");
-                await wait(800);
-                if (!cancelled) {
-                  setVerificationPhase("ready");
-                }
-                return;
+                const timedResult = await Promise.race([
+                  roleQuery,
+                  wait(VERIFY_ATTEMPT_TIMEOUT_MS).then(() => ({ data: null, error: { message: "timeout" } })),
+                ]);
+
+                const roleRow = (timedResult as any)?.data;
+                const roleError = (timedResult as any)?.error;
+
+                if (roleError) return false;
+                return Boolean(roleRow?.is_organiser || roleRow?.is_masteradmin);
+              } catch (_error) {
+                return false;
               }
+            })(),
+          ]);
+
+          if (apiRoleResult || supabaseRoleResult) {
+            setVerificationPhase("welcome");
+            await wait(VERIFY_WELCOME_DELAY_MS);
+            if (!cancelled) {
+              setVerificationPhase("ready");
             }
-          } catch (_error) {
-            // Retry path handles transient fetch/network issues.
-          }
-
-          try {
-            const { data: roleRow, error: roleError } = await supabase
-              .from("users")
-              .select("is_organiser, is_masteradmin")
-              .eq("email", sessionEmail)
-              .maybeSingle();
-
-            if (!roleError) {
-              const canAccessFromSupabase = Boolean(roleRow?.is_organiser || roleRow?.is_masteradmin);
-              if (canAccessFromSupabase) {
-                setVerificationPhase("welcome");
-                setVerificationMessage("Welcome developer!");
-                await wait(800);
-                if (!cancelled) {
-                  setVerificationPhase("ready");
-                }
-                return;
-              }
-            }
-          } catch (_error) {
-            // Keep retrying; failures here should not crash page boot.
+            return;
           }
 
           if (attempt < 3) {
-            await wait(600);
+            await wait(VERIFY_RETRY_DELAY_MS);
           }
         }
 
         setVerificationPhase("failed");
         setVerificationMessage("Could not verify organiser/masteradmin access. Redirecting...");
-        await wait(700);
+        await wait(VERIFY_FAIL_REDIRECT_DELAY_MS);
         if (!cancelled) {
           router.replace("/error");
         }
@@ -827,6 +879,52 @@ export default function StatusCheckPage() {
     return { label: "Critical", accent: "rose" };
   }, [opsScore]);
 
+  const passFailPieData = useMemo(() => {
+    if (!sectionSummaries.length) return [] as Array<{ name: string; value: number; color: string }>;
+
+    const passed = sectionSummaries.reduce((sum, section) => sum + section.bucket.passed, 0);
+    const failed = sectionSummaries.reduce((sum, section) => sum + section.bucket.failed, 0);
+    const skipped = sectionSummaries.reduce((sum, section) => sum + section.bucket.skipped, 0);
+
+    return [
+      { name: "Passed", value: passed, color: "#10b981" },
+      { name: "Failed", value: failed, color: "#f43f5e" },
+      { name: "Skipped", value: skipped, color: "#f59e0b" },
+    ];
+  }, [sectionSummaries]);
+
+  const sectionFailureData = useMemo(
+    () =>
+      sectionSummaries.map((section) => ({
+        section: section.label,
+        passRate: Number(asPercent(section.bucket.passed, section.bucket.total).replace("%", "")),
+        failed: section.bucket.failed,
+      })),
+    [sectionSummaries]
+  );
+
+  const latencyProfileData = useMemo(() => {
+    if (!loadResult) return [] as Array<{ metric: string; value: number }>;
+
+    return [
+      { metric: "p50", value: loadResult.p50Ms },
+      { metric: "p95", value: loadResult.p95Ms },
+      { metric: "max", value: loadResult.maxMs },
+      { metric: "avg", value: loadResult.avgMs },
+    ];
+  }, [loadResult]);
+
+  const runTrendData = useMemo(() => {
+    return history
+      .slice(0, 12)
+      .reverse()
+      .map((entry, index) => ({
+        name: `${entry.kind}-${index + 1}`,
+        ok: entry.ok ? 1 : 0,
+        result: entry.ok ? "Pass" : "Fail",
+      }));
+  }, [history]);
+
   const commandSnippets = useMemo(() => {
     const targetPath = loadTarget === "custom" ? customPath || "/api/events?page=1&pageSize=5" : loadTarget;
 
@@ -995,12 +1093,12 @@ export default function StatusCheckPage() {
 
   if (authLoading || !authToken || verificationPhase === "checking" || verificationPhase === "welcome") {
     return (
-      <div className={cn("min-h-screen p-8", headingFont.className)}>
-        <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_10%_5%,_#dbeafe_0%,_#eef2ff_45%,_#f8fafc_100%)]" />
-        <div className="mx-auto max-w-4xl rounded-3xl border border-slate-200 bg-white/85 p-10 text-center shadow-[0_20px_50px_-30px_rgba(21,76,179,0.65)] backdrop-blur-sm">
+      <div className={cn("statuscheck-dark min-h-screen p-8", headingFont.className)}>
+        <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_10%_5%,_#0f172a_0%,_#020617_50%,_#000000_100%)]" />
+        <div className="mx-auto max-w-4xl rounded-3xl border border-slate-700 bg-slate-900/80 p-10 text-center shadow-[0_24px_60px_-30px_rgba(56,189,248,0.45)] backdrop-blur-sm">
           <RefreshCw className={cn("mx-auto h-10 w-10 text-[#154CB3]", verificationPhase === "checking" && "animate-spin")} />
           <p className="mt-3 text-lg font-semibold text-slate-800">
-            {verificationPhase === "welcome" ? "Welcome developer!" : "Verifying developer access"}
+            {verificationPhase === "welcome" ? "Welcome, Developer" : "Verifying Access"}
           </p>
           <p className="mt-1 text-sm text-slate-600">
             {verificationPhase === "welcome" ? "Opening StatusCheck workspace..." : verificationMessage}
@@ -1015,9 +1113,9 @@ export default function StatusCheckPage() {
 
   if (verificationPhase === "failed") {
     return (
-      <div className={cn("min-h-screen p-8", headingFont.className)}>
-        <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_10%_5%,_#dbeafe_0%,_#eef2ff_45%,_#f8fafc_100%)]" />
-        <div className="mx-auto max-w-4xl rounded-3xl border border-rose-200 bg-white/90 p-10 text-center shadow-[0_20px_50px_-30px_rgba(225,29,72,0.35)] backdrop-blur-sm">
+      <div className={cn("statuscheck-dark min-h-screen p-8", headingFont.className)}>
+        <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_10%_5%,_#0f172a_0%,_#020617_50%,_#000000_100%)]" />
+        <div className="mx-auto max-w-4xl rounded-3xl border border-rose-700/60 bg-slate-900/85 p-10 text-center shadow-[0_20px_50px_-30px_rgba(225,29,72,0.45)] backdrop-blur-sm">
           <p className="text-lg font-semibold text-rose-700">Access verification failed</p>
           <p className="mt-2 text-sm text-slate-600">{verificationMessage}</p>
         </div>
@@ -1030,10 +1128,10 @@ export default function StatusCheckPage() {
   }
 
   return (
-    <div className={cn("min-h-screen pb-12", headingFont.className)}>
-      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_15%_5%,_#e0f2fe_0%,_#e2e8f0_42%,_#f8fafc_100%)]" />
-      <div className="pointer-events-none fixed -left-16 top-32 -z-10 h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
-      <div className="pointer-events-none fixed -right-20 top-10 -z-10 h-80 w-80 rounded-full bg-blue-400/20 blur-3xl" />
+    <div className={cn("statuscheck-dark min-h-screen pb-12", headingFont.className)}>
+      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_20%_8%,_#1e293b_0%,_#0f172a_35%,_#020617_100%)]" />
+      <div className="pointer-events-none fixed -left-16 top-32 -z-10 h-72 w-72 rounded-full bg-cyan-500/15 blur-3xl" />
+      <div className="pointer-events-none fixed -right-20 top-10 -z-10 h-80 w-80 rounded-full bg-blue-500/15 blur-3xl" />
 
       <div className="mx-auto w-full max-w-7xl px-4 pt-8 md:px-6">
         <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-[0_24px_70px_-40px_rgba(21,76,179,0.6)] backdrop-blur-sm md:p-8">
@@ -1050,12 +1148,17 @@ export default function StatusCheckPage() {
               <p className="mt-2 max-w-3xl text-sm text-slate-600 md:text-base">
                 Deep diagnostics for endpoint reliability, workflow health, mutation safety, and performance pressure.
               </p>
+              <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500">
+                <HelpTip text="This console runs health probes, workflow checks, and load tests so developers can diagnose production readiness quickly." />
+                What this page does
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => void fetchSummary({ record: true })}
                 disabled={loadingSummary}
+                title="Refresh lightweight health snapshot"
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCw className={cn("h-4 w-4", loadingSummary && "animate-spin")} />
@@ -1064,6 +1167,7 @@ export default function StatusCheckPage() {
               <button
                 onClick={() => void runFullCheck()}
                 disabled={runningFull}
+                title="Run full diagnostic suite across endpoints and workflows"
                 className="inline-flex items-center gap-2 rounded-lg bg-[#154CB3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#154CB3]/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Activity className={cn("h-4 w-4", runningFull && "animate-pulse")} />
@@ -1071,6 +1175,7 @@ export default function StatusCheckPage() {
               </button>
               <button
                 onClick={exportSnapshot}
+                title="Download current status snapshot as JSON"
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 <Download className="h-4 w-4" />
@@ -1127,11 +1232,116 @@ export default function StatusCheckPage() {
           />
         </section>
 
+        <section className="mt-6 grid gap-4 xl:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-[0.12em] text-slate-700">
+              <BarChart3 className="h-4 w-4" />
+              Visual Insights
+              <HelpTip text="Quick visual health summaries to help you spot regressions faster than reading raw lists." />
+            </h2>
+
+            {passFailPieData.length === 0 ? (
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                Run a full suite to generate composition charts.
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="h-56 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={passFailPieData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={72}>
+                        {passFailPieData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip
+                        contentStyle={{ background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0" }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="h-56 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={sectionFailureData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis dataKey="section" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                      <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                      <RechartsTooltip
+                        contentStyle={{ background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0" }}
+                      />
+                      <Bar dataKey="passRate" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-[0.12em] text-slate-700">
+              <Gauge className="h-4 w-4" />
+              Performance Trend
+              <HelpTip text="Latency and run success trends help identify deterioration over time." />
+            </h2>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="h-56 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                {latencyProfileData.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-xs text-slate-500">
+                    Run load diagnostics to draw latency profile.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={latencyProfileData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis dataKey="metric" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                      <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                      <RechartsTooltip
+                        contentStyle={{ background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0" }}
+                      />
+                      <Bar dataKey="value" fill="#a78bfa" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="h-56 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                {runTrendData.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-xs text-slate-500">
+                    Trigger checks to build run trend history.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={runTrendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} />
+                      <YAxis domain={[0, 1]} tick={{ fill: "#94a3b8", fontSize: 10 }} />
+                      <RechartsTooltip
+                        formatter={(value: number) => (value === 1 ? "Pass" : "Fail")}
+                        contentStyle={{ background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0" }}
+                      />
+                      <Bar dataKey="ok" radius={[4, 4, 0, 0]}>
+                        {runTrendData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.ok ? "#10b981" : "#f43f5e"} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Search Checks
+                <span className="inline-flex items-center gap-1">
+                  Search Checks
+                  <HelpTip text="Filter checks by endpoint name, route path, method, or error message." />
+                </span>
                 <div className="relative mt-1">
                   <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
                   <input
@@ -1139,16 +1349,21 @@ export default function StatusCheckPage() {
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
                     placeholder="name, path, message"
+                    title="Type to filter visible checks"
                     className="w-full rounded-lg border border-slate-300 py-2 pl-8 pr-3 text-sm text-slate-700 focus:border-[#154CB3] focus:outline-none"
                   />
                 </div>
               </label>
 
               <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Active Section
+                <span className="inline-flex items-center gap-1">
+                  Active Section
+                  <HelpTip text="Switch between endpoint, fetch/display, workflow, and mutation result groups." />
+                </span>
                 <select
                   value={activeSection}
                   onChange={(event) => setActiveSection(event.target.value as CheckSectionKey)}
+                  title="Pick which check category to inspect"
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-[#154CB3] focus:outline-none"
                 >
                   {SECTION_META.map((section) => (
@@ -1162,6 +1377,7 @@ export default function StatusCheckPage() {
               <div className="flex items-end gap-2">
                 <button
                   onClick={() => setShowFailedOnly((prev) => !prev)}
+                  title="Show only failing checks"
                   className={cn(
                     "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold",
                     showFailedOnly
@@ -1174,6 +1390,7 @@ export default function StatusCheckPage() {
                 </button>
                 <button
                   onClick={() => setAutoRefreshSummary((prev) => !prev)}
+                  title="Auto-refresh summary every 45 seconds"
                   className={cn(
                     "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold",
                     autoRefreshSummary
@@ -1190,6 +1407,7 @@ export default function StatusCheckPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setHistory([])}
+                title="Clear local run history from this browser"
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 Clear History
@@ -1197,6 +1415,7 @@ export default function StatusCheckPage() {
               <button
                 onClick={() => void runFullCheck()}
                 disabled={runningFull}
+                title="Run all checks immediately"
                 className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {runningFull ? "Running..." : "Execute Full Suite"}
@@ -1252,6 +1471,7 @@ export default function StatusCheckPage() {
                 <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-slate-700">Route Coverage Matrix</h2>
                 <button
                   onClick={() => void copyToClipboard(summary.apiBaseUrl, "API base copied")}
+                  title="Copy resolved API base URL"
                   className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
                 >
                   <Copy className="h-3.5 w-3.5" />
@@ -1323,6 +1543,7 @@ export default function StatusCheckPage() {
             <h2 className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-[0.12em] text-slate-700">
               <TerminalSquare className="h-4 w-4" />
               Developer Quick Commands
+              <HelpTip text="Prebuilt commands you can run in terminal or CI for repeatable diagnostics." />
             </h2>
             <Sparkles className="h-4 w-4 text-[#154CB3]" />
           </div>
@@ -1335,6 +1556,7 @@ export default function StatusCheckPage() {
                 </pre>
                 <button
                   onClick={() => void copyToClipboard(snippet.command, `${snippet.title} copied`)}
+                  title="Copy this command"
                   className="mt-2 inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   <Copy className="h-3.5 w-3.5" />
@@ -1350,9 +1572,11 @@ export default function StatusCheckPage() {
             <h2 className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-[0.12em] text-slate-700">
               <BarChart3 className="h-4 w-4" />
               Raw Diagnostics
+              <HelpTip text="Inspect raw API payloads for summary, full run, and load checks for deeper debugging." />
             </h2>
             <button
               onClick={() => setShowRawDiagnostics((prev) => !prev)}
+              title="Show or hide raw JSON payload inspector"
               className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
               {showRawDiagnostics ? "Hide JSON" : "Show JSON"}
@@ -1382,6 +1606,7 @@ export default function StatusCheckPage() {
                 ))}
                 <button
                   onClick={() => void copyToClipboard(rawDiagnosticsText, "Raw diagnostics copied")}
+                  title="Copy currently selected raw JSON payload"
                   className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   <Copy className="h-3.5 w-3.5" />
@@ -1408,6 +1633,7 @@ export default function StatusCheckPage() {
                 <button
                   key={preset.id}
                   onClick={() => applyLoadPreset(preset)}
+                  title={`Apply ${preset.label} preset`}
                   className={cn(
                     "rounded-lg border p-2 text-left",
                     selectedPresetId === preset.id
@@ -1433,6 +1659,7 @@ export default function StatusCheckPage() {
                 <select
                   value={loadTarget}
                   onChange={(event) => setLoadTarget(event.target.value)}
+                  title="Endpoint group to target during load test"
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                 >
                   <option value="events">events</option>
@@ -1453,6 +1680,7 @@ export default function StatusCheckPage() {
                   max={120}
                   value={iterations}
                   onChange={(event) => setIterations(Number(event.target.value))}
+                  title="Total request count in load run"
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                 />
               </label>
@@ -1464,6 +1692,7 @@ export default function StatusCheckPage() {
                   max={12}
                   value={concurrency}
                   onChange={(event) => setConcurrency(Number(event.target.value))}
+                  title="Parallel request workers"
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                 />
               </label>
@@ -1474,6 +1703,7 @@ export default function StatusCheckPage() {
                   value={customPath}
                   onChange={(event) => setCustomPath(event.target.value)}
                   placeholder="/api/events?page=1&pageSize=5"
+                  title="Custom API path when target is custom"
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                 />
               </label>
@@ -1492,6 +1722,7 @@ export default function StatusCheckPage() {
               <button
                 onClick={() => void runLoadCheck()}
                 disabled={runningLoad}
+                title="Run load benchmark using current config"
                 className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Gauge className={cn("h-4 w-4", runningLoad && "animate-pulse")} />
@@ -1595,6 +1826,7 @@ export default function StatusCheckPage() {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={copyIncidentReport}
+                  title="Copy markdown incident report to clipboard"
                   className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   <Copy className="h-3.5 w-3.5" />
@@ -1602,6 +1834,7 @@ export default function StatusCheckPage() {
                 </button>
                 <button
                   onClick={exportIncidentReport}
+                  title="Export markdown incident report file"
                   className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   <FileText className="h-3.5 w-3.5" />
@@ -1673,6 +1906,7 @@ export default function StatusCheckPage() {
           <h2 className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-[0.12em] text-slate-700">
             <Wrench className="h-4 w-4" />
             Mutation Guard Rail
+            <HelpTip text="Mutation checks create temporary records then clean them up. Only enable when validating create/update/archive/delete paths." />
           </h2>
           <p className="mt-2 text-xs text-slate-600">
             Mutation tests create and clean synthetic fest/event/notification rows. Keep disabled unless explicitly needed.
@@ -1707,6 +1941,53 @@ export default function StatusCheckPage() {
         <div className="mt-4 text-center text-xs text-slate-500">
           Last summary refresh: {summary ? formatDateTime(summary.checkedAt) : "not available"}
         </div>
+
+        <style jsx global>{`
+          .statuscheck-dark [class*="bg-white"] {
+            background-color: rgba(15, 23, 42, 0.9) !important;
+          }
+
+          .statuscheck-dark .bg-slate-50 {
+            background-color: rgba(30, 41, 59, 0.55) !important;
+          }
+
+          .statuscheck-dark .bg-slate-100 {
+            background-color: rgba(30, 41, 59, 0.72) !important;
+          }
+
+          .statuscheck-dark [class*="border-slate-"] {
+            border-color: #334155 !important;
+          }
+
+          .statuscheck-dark .text-slate-900,
+          .statuscheck-dark .text-slate-800,
+          .statuscheck-dark .text-slate-700 {
+            color: #e2e8f0 !important;
+          }
+
+          .statuscheck-dark .text-slate-600,
+          .statuscheck-dark .text-slate-500,
+          .statuscheck-dark .text-slate-400 {
+            color: #94a3b8 !important;
+          }
+
+          .statuscheck-dark input:not([type="checkbox"]):not([type="radio"]),
+          .statuscheck-dark select,
+          .statuscheck-dark textarea {
+            background-color: rgba(15, 23, 42, 0.78) !important;
+            color: #e2e8f0 !important;
+            border-color: #334155 !important;
+          }
+
+          .statuscheck-dark input::placeholder,
+          .statuscheck-dark textarea::placeholder {
+            color: #64748b !important;
+          }
+
+          .statuscheck-dark .shadow-sm {
+            box-shadow: 0 12px 28px -18px rgba(2, 6, 23, 0.95) !important;
+          }
+        `}</style>
       </div>
     </div>
   );
