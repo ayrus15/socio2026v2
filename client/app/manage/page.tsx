@@ -41,6 +41,8 @@ interface Fest {
   fest_image_url: string;
   organizing_dept: string;
   created_by?: string;
+  contact_email?: string | null;
+  event_heads?: Array<{ email?: string | null } | string>;
   campus_hosted_at?: string | null;
   is_archived?: boolean;
   archived_at?: string | null;
@@ -339,6 +341,19 @@ export default function ManageDashboard() {
   const normalizeEmail = (value: string | null | undefined) =>
     String(value || "").trim().toLowerCase();
   const currentUserEmail = normalizeEmail(userData?.email);
+  const isCurrentUserFestHead = (fest: Fest) => {
+    if (!currentUserEmail) return false;
+    const heads = Array.isArray(fest.event_heads) ? fest.event_heads : [];
+
+    return heads.some((head) => {
+      if (!head) return false;
+      if (typeof head === "string") {
+        return normalizeEmail(head) === currentUserEmail;
+      }
+
+      return normalizeEmail((head as { email?: string | null }).email) === currentUserEmail;
+    });
+  };
   const isOwnedByCurrentUser = (...ownerCandidates: Array<string | null | undefined>) => {
     if (isMasterAdmin) return true;
     if (!currentUserEmail) return false;
@@ -390,13 +405,21 @@ export default function ManageDashboard() {
         fest_image_url: fest.fest_image_url || "",
         organizing_dept: fest.organizing_dept || "",
         created_by: fest.created_by || fest.createdBy || fest.user_email || fest.organiser_email || null,
+        contact_email: fest.contact_email || fest.contactEmail || null,
+        event_heads: Array.isArray(fest.event_heads)
+          ? fest.event_heads
+          : Array.isArray(fest.eventHeads)
+            ? fest.eventHeads
+            : [],
         campus_hosted_at: fest.campus_hosted_at || fest.campus || null,
         is_archived: fest.is_archived === true,
         archived_at: fest.archived_at || null,
       }));
 
-      const userSpecificFests = mappedFests.filter((fest) =>
-        isOwnedByCurrentUser(fest.created_by)
+      const userSpecificFests = mappedFests.filter(
+        (fest) =>
+          isOwnedByCurrentUser(fest.created_by, fest.contact_email) ||
+          isCurrentUserFestHead(fest)
       );
 
       setFests(userSpecificFests);
@@ -540,6 +563,13 @@ export default function ManageDashboard() {
     return !isArchived && !isPast;
   };
 
+  const matchesFestStatus = (isPast: boolean, isArchived: boolean) => {
+    if (statusFilter === "all") return true;
+    if (statusFilter === "archived") return isArchived;
+    if (statusFilter === "past") return !isArchived && isPast;
+    return !isArchived && !isPast;
+  };
+
   const userSpecificContextEvents = (liveEvents.length > 0 ? liveEvents : contextAllEvents as ContextEvent[]).filter((e) => {
     const isOwnerOrMaster = isOwnedByCurrentUser(
       e.created_by,
@@ -561,7 +591,7 @@ export default function ManageDashboard() {
     const matchesCampus = campusFilter === "all" || (fest as any).campus_hosted_at === campusFilter;
     const festIsPast = isPastDate(fest.closing_date);
     const festIsArchived = getEffectiveFestArchiveState(fest);
-    return matchesSearch && matchesCampus && matchesStatus(festIsPast, festIsArchived);
+    return matchesSearch && matchesCampus && matchesFestStatus(festIsPast, festIsArchived);
   });
 
   const activeStatusFilterOptions =
