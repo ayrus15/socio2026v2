@@ -293,8 +293,7 @@ export const requireOwnership = (table, paramName, ownerField = 'auth_uuid') => 
           req.resource = resource;
           return next();
         } else {
-          console.log(`[Ownership] ❌ FAILED: auth_uuid mismatch (${resource.auth_uuid} !== ${req.userId})`);
-          return res.status(403).json({ error: 'Access denied: You can only modify your own resources' });
+          console.log(`[Ownership] ⚠️ auth_uuid mismatch (${resource.auth_uuid} !== ${req.userId}), checking legacy created_by fallback...`);
         }
       }
       

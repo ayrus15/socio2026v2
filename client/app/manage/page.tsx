@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
 import {
   useEvents,
@@ -8,7 +8,6 @@ import {
 } from "../../context/EventContext";
 import { formatDateFull, formatTime } from "@/lib/dateUtils";
 import Link from "next/link";
-import { getFests } from "@/lib/api";
 import { createBrowserClient } from "@supabase/ssr";
 import { toast } from "sonner";
 import {
@@ -67,6 +66,7 @@ const EVENT_STATUS_FILTER_OPTIONS: Array<{ value: StatusFilter; label: string }>
 
 const AUTO_ARCHIVE_DAYS = 15;
 const AUTO_ARCHIVE_MS = AUTO_ARCHIVE_DAYS * 24 * 60 * 60 * 1000;
+const API_URL = process.env.NEXT_PUBLIC_API_URL!.replace(/\/api\/?$/, "");
 
 const CAMPUSES = [
   "Central Campus (Main)",
@@ -336,6 +336,60 @@ export default function ManageDashboard() {
   const [festArchiveUpdatingIds, setFestArchiveUpdatingIds] = useState<Set<string>>(new Set());
   const [localFestArchivedIds, setLocalFestArchivedIds] = useState<Set<string>>(new Set());
 
+  const refreshFests = useCallback(async () => {
+    if (!userData?.email || !authToken) {
+      setFests([]);
+      setIsLoadingFests(false);
+      return;
+    }
+
+    setIsLoadingFests(true);
+    try {
+      const response = await fetch(`${API_URL}/api/fests?sortBy=created_at&sortOrder=desc`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch fests (status: ${response.status})`);
+      }
+
+      const payload = await response.json();
+      const rawFests = Array.isArray(payload?.fests)
+        ? payload.fests
+        : Array.isArray(payload)
+          ? payload
+          : [];
+
+      const mappedFests: Fest[] = rawFests.map((fest: any) => ({
+        fest_id: String(fest.fest_id || fest.id || fest.festId || fest.fest_title || fest.title || ""),
+        fest_title: fest.fest_title || fest.title || "Untitled",
+        description: fest.description || "",
+        opening_date: fest.opening_date || null,
+        closing_date: fest.closing_date || null,
+        fest_image_url: fest.fest_image_url || "",
+        organizing_dept: fest.organizing_dept || "",
+        created_by: fest.created_by || fest.createdBy || fest.user_email || fest.organiser_email || null,
+        campus_hosted_at: fest.campus_hosted_at || fest.campus || null,
+        is_archived: fest.is_archived === true,
+        archived_at: fest.archived_at || null,
+      }));
+
+      const userSpecificFests = isMasterAdmin
+        ? mappedFests
+        : mappedFests.filter((fest) => !fest.created_by || fest.created_by === userData.email);
+
+      setFests(userSpecificFests);
+    } catch (error) {
+      console.error("Error fetching fests:", error);
+      setFests([]);
+    } finally {
+      setIsLoadingFests(false);
+    }
+  }, [API_URL, authToken, isMasterAdmin, userData?.email]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (!statusFilterRef.current?.contains(event.target as Node)) {
@@ -364,37 +418,8 @@ export default function ManageDashboard() {
 
   // Fetch Fests secure logic
   useEffect(() => {
-    if (!userData?.email) {
-      setIsLoadingFests(false);
-      setFests([]);
-      return;
-    }
-    setIsLoadingFests(true);
-    getFests()
-      .then((data) => {
-        const mappedFests: Fest[] = Array.isArray(data) ? data.map((fest: any) => ({
-          fest_id: String(fest.fest_id || fest.id || fest.festId || fest.fest_title || fest.title || ""),
-          fest_title: fest.fest_title || fest.title || "Untitled",
-          description: fest.description || "",
-          opening_date: fest.opening_date || null,
-          closing_date: fest.closing_date || null,
-          fest_image_url: fest.fest_image_url || "",
-          organizing_dept: fest.organizing_dept || "",
-          created_by: fest.created_by || fest.createdBy || fest.user_email || fest.organiser_email || null,
-          campus_hosted_at: fest.campus_hosted_at || fest.campus || null,
-          is_archived: fest.is_archived === true,
-          archived_at: fest.archived_at || null,
-        })) : [];
-
-        const userSpecificFests = isMasterAdmin 
-          ? mappedFests 
-          : mappedFests.filter((fest) => !fest.created_by || fest.created_by === userData.email);
-
-        setFests(userSpecificFests);
-      })
-      .catch((error) => console.error("Error fetching fests:", error))
-      .finally(() => setIsLoadingFests(false));
-  }, [userData?.email, isMasterAdmin]);
+    refreshFests();
+  }, [refreshFests]);
 
   // Fetch fresh events from Supabase directly on page load to ensure archive status is current
   // This bypasses the cached events from EventContext to show real-time archive changes
@@ -405,23 +430,24 @@ export default function ManageDashboard() {
     const fetchLiveEvents = async () => {
       try {
         setIsLoadingLiveEvents(true);
-        const supabase = createBrowserClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        );
-        
-        const { data, error } = await supabase
-          .from('events')
-          .select('*')
-          .order('created_at', { ascending: false });
-        
-        if (error) {
-          console.error("Error fetching live events:", error);
-          // Fall back to context events if fetch fails
+        if (!authToken) {
           setLiveEvents(contextAllEvents);
-        } else {
-          setLiveEvents(data || []);
+          return;
         }
+
+        const response = await fetch(`${API_URL}/api/events?sortBy=created_at&sortOrder=desc`, {
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+          },
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch events (status: ${response.status})`);
+        }
+
+        const payload = await response.json();
+        setLiveEvents(Array.isArray(payload?.events) ? payload.events : []);
       } catch (err) {
         console.error("Error fetching live events:", err);
         // Fall back to context events if fetch fails
@@ -432,7 +458,7 @@ export default function ManageDashboard() {
     };
 
     fetchLiveEvents();
-  }, []); // Run once on mount to get initial fresh data
+  }, [authToken, contextAllEvents]);
 
 
   // Permissions & Campus logic for Events
@@ -563,23 +589,27 @@ export default function ManageDashboard() {
   // Helper function to refresh live events from Supabase
   const refreshLiveEvents = async () => {
     try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
-      
-      const { data, error } = await supabase
-        .from('events')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
-      if (error) {
-        console.error("Error refreshing live events:", error);
-      } else {
-        setLiveEvents(data || []);
+      if (!authToken) {
+        setLiveEvents(contextAllEvents);
+        return;
       }
+
+      const response = await fetch(`${API_URL}/api/events?sortBy=created_at&sortOrder=desc`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to refresh events (status: ${response.status})`);
+      }
+
+      const payload = await response.json();
+      setLiveEvents(Array.isArray(payload?.events) ? payload.events : []);
     } catch (err) {
       console.error("Error refreshing live events:", err);
+      setLiveEvents(contextAllEvents);
     }
   };
 
@@ -946,7 +976,7 @@ export default function ManageDashboard() {
         // Find all events with this fest_id and update them
         const eventsToCheck = liveEvents.length > 0 ? liveEvents : contextAllEvents;
         eventsToCheck?.forEach((event) => {
-          if (event.fest === festId) {
+          if (event.fest === festId || (event as any).fest_id === festId) {
             updated[event.event_id] = {
               is_archived: Boolean(shouldArchive),
               archived_at: shouldArchive ? nowIso : null,
@@ -975,8 +1005,8 @@ export default function ManageDashboard() {
       );
       console.log(`✅ Fest archive update successful: ${eventsAffected} events affected`);
 
-      // Refresh live events to reflect the latest archive status for all events under this fest
-      await refreshLiveEvents();
+      // Refresh both datasets so archive UI does not snap back to stale state.
+      await Promise.all([refreshLiveEvents(), refreshFests()]);
     } catch (error: any) {
       console.error("❌ Fest archive update failed:", error);
       toast.error(`❌ ${error?.message || "Unable to update fest archive status."}`);
