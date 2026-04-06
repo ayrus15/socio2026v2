@@ -56,6 +56,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [outsiderNameError, setOutsiderNameError] = useState<string | null>(null);
   const [showCampusModal, setShowCampusModal] = useState(false);
 
+  const getFriendlyOutsiderNameError = (rawError?: string | null) => {
+    const normalized = String(rawError || "").trim().toLowerCase();
+    if (!normalized) {
+      return "We couldn’t save your name right now. Please try again.";
+    }
+    if (normalized.includes("name edit already used")) {
+      return "Your one-time name update has already been used.";
+    }
+    if (normalized.includes("unauthorized")) {
+      return "Your session expired. Please sign in again and retry.";
+    }
+    if (normalized.includes("only outsider users can edit name")) {
+      return "This update option is available only for visitor accounts.";
+    }
+    if (normalized.includes("name must be a non-empty string") || normalized.includes("name cannot be empty")) {
+      return "Please enter your display name before saving.";
+    }
+    if (normalized.includes("network")) {
+      return "Network issue detected. Please check your connection and try again.";
+    }
+    if (normalized.includes("internal server error") || normalized.includes("failed to save")) {
+      return "Couldn’t save changes right now. Please try again in a moment.";
+    }
+    return rawError || "We couldn’t save your name right now. Please try again.";
+  };
+
   // Helper to persist session in localStorage
   const persistSession = (session: Session | null) => {
     if (session) {
@@ -410,7 +436,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                 <p className="text-[11px] leading-relaxed text-amber-800">
-                  Please confirm your display name before continuing. You can change it only once.
+                  Please confirm your display name before continuing. Visitor profiles can update it only once.
                 </p>
               </div>
 
@@ -448,15 +474,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               </div>
 
               {outsiderNameError && (
-                <p className="text-red-500 text-xs text-center">{outsiderNameError}</p>
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                  <p className="text-red-700 text-xs text-center">{outsiderNameError}</p>
+                </div>
               )}
 
               {isEditingOutsiderName && (
-                <p className="text-[11px] text-amber-700 text-center">One-time edit: verify spelling before you save.</p>
+                <p className="text-[11px] text-amber-700 text-center">One-time update: check spelling carefully before saving.</p>
               )}
 
               {!isEditingOutsiderName && (
-                <p className="text-[11px] text-gray-500 text-center">Need a correction? Tap Change Name first.</p>
+                <p className="text-[11px] text-gray-500 text-center">Need a correction? Use Change Name before you continue.</p>
               )}
 
               {/* Action buttons */}
@@ -476,14 +504,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                       });
                       if (!resp.ok) {
                         const data = await resp.json();
-                        setOutsiderNameError(data.error || 'Failed to save');
+                        setOutsiderNameError(getFriendlyOutsiderNameError(data.error));
                         setIsSavingOutsiderName(false);
                         return;
                       }
                       setShowOutsiderWarning(false);
                       window.location.reload();
                     } catch {
-                      setOutsiderNameError('Network error');
+                      setOutsiderNameError(getFriendlyOutsiderNameError('Network error'));
                       setIsSavingOutsiderName(false);
                     }
                   }}
@@ -504,7 +532,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   <button
                     onClick={async () => {
                       if (!outsiderNameInput.trim()) {
-                        setOutsiderNameError("Name cannot be empty");
+                        setOutsiderNameError(getFriendlyOutsiderNameError("Name cannot be empty"));
                         return;
                       }
                       setIsSavingOutsiderName(true);
@@ -519,14 +547,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         });
                         if (!resp.ok) {
                           const data = await resp.json();
-                          setOutsiderNameError(data.error || 'Failed to save');
+                          setOutsiderNameError(getFriendlyOutsiderNameError(data.error));
                           setIsSavingOutsiderName(false);
                           return;
                         }
                         setShowOutsiderWarning(false);
                         window.location.reload();
                       } catch {
-                        setOutsiderNameError('Network error');
+                        setOutsiderNameError(getFriendlyOutsiderNameError('Network error'));
                         setIsSavingOutsiderName(false);
                       }
                     }}
