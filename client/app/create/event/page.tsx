@@ -145,6 +145,12 @@ export default function CreateEventPage() {
         ? dataFromHookForm.maxParticipants
         : "1"
     );
+    appendIfExists(
+      "min_participants",
+      dataFromHookForm.isTeamEvent
+        ? dataFromHookForm.minParticipants
+        : "1"
+    );
 
     appendIfExists("organizer_email", dataFromHookForm.contactEmail);
     appendIfExists("organizer_phone", dataFromHookForm.contactPhone);

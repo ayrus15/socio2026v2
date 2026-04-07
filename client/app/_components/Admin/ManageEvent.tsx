@@ -727,6 +727,128 @@ const secondaryButtonClasses = `${baseButtonClasses} border border-gray-300 text
 const toggleTrackClass =
   "w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[#154CB3]/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#154CB3]";
 
+interface FestOption {
+  value: string;
+  label: string;
+  departmentAccess: string[];
+  organizingDept: string;
+  category: string;
+  campusHostedAt: string;
+  allowedCampuses: string[];
+}
+
+const toCanonical = (value: string): string =>
+  value.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const normalizeStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return Array.from(
+      new Set(
+        value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      )
+    );
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return normalizeStringArray(parsed);
+      } catch {
+        // Fall through to plain string handling.
+      }
+    }
+
+    if (trimmed.includes(",")) {
+      return Array.from(
+        new Set(
+          trimmed
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean)
+        )
+      );
+    }
+
+    return [trimmed];
+  }
+
+  return [];
+};
+
+const normalizeDepartmentAccess = (value: unknown): string[] =>
+  Array.from(
+    new Set(
+      normalizeStringArray(value).map((entry) => {
+        const directValueMatch = departmentOptions.find((dept) => dept.value === entry);
+        if (directValueMatch) return directValueMatch.value;
+
+        const canonicalEntry = toCanonical(entry);
+        const mapped = departmentOptions.find(
+          (dept) =>
+            toCanonical(dept.value) === canonicalEntry ||
+            toCanonical(dept.label) === canonicalEntry
+        );
+
+        return mapped?.value || entry;
+      })
+    )
+  );
+
+const normalizeCategoryValue = (value: unknown): string => {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  const directValueMatch = categoryOptions.find((category) => category.value === trimmed);
+  if (directValueMatch) return directValueMatch.value;
+
+  const canonicalEntry = toCanonical(trimmed);
+  const mapped = categoryOptions.find(
+    (category) =>
+      toCanonical(category.value) === canonicalEntry ||
+      toCanonical(category.label) === canonicalEntry
+  );
+
+  return mapped?.value || "";
+};
+
+const normalizeCampusEntry = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const directMatch = christCampuses.find((campus) => campus === trimmed);
+  if (directMatch) return directMatch;
+
+  const canonicalEntry = toCanonical(trimmed);
+  const mapped = christCampuses.find(
+    (campus) => toCanonical(campus) === canonicalEntry
+  );
+
+  return mapped || null;
+};
+
+const normalizeCampusHostedAt = (value: unknown): string => {
+  const first = normalizeStringArray(value)[0];
+  if (!first) return "";
+  return normalizeCampusEntry(first) || "";
+};
+
+const normalizeAllowedCampuses = (value: unknown): string[] =>
+  Array.from(
+    new Set(
+      normalizeStringArray(value)
+        .map((entry) => normalizeCampusEntry(entry))
+        .filter((entry): entry is string => Boolean(entry))
+    )
+  );
+
 export default function EventForm({
   onSubmit,
   defaultValues,
@@ -739,18 +861,35 @@ export default function EventForm({
   isArchiveUpdating,
   onToggleArchive,
 }: EventFormProps) {
-  const [fetchedFests, setFetchedFests] = useState<{ value: string; label: string }[]>([]);
+  const [fetchedFests, setFetchedFests] = useState<FestOption[]>([]);
 
   useEffect(() => {
     async function fetchFests() {
       try {
         const fests = await getFests();
         if (fests) {
-          const options = fests.map((f: any) => ({
+          const options: FestOption[] = fests.map((f: any) => ({
             value: f.fest_id || f.id || f.fest_title || f.title || "Untitled Fest",
-            label: f.fest_title || f.title || "Untitled Fest"
+            label: f.fest_title || f.title || "Untitled Fest",
+            departmentAccess: normalizeDepartmentAccess(f.department_access),
+            organizingDept:
+              typeof f.organizing_dept === "string" ? f.organizing_dept.trim() : "",
+            category: normalizeCategoryValue(f.category),
+            campusHostedAt: normalizeCampusHostedAt(f.campus_hosted_at),
+            allowedCampuses: normalizeAllowedCampuses(f.allowed_campuses),
           }));
-          setFetchedFests([{ value: "none", label: "None" }, ...options]);
+          setFetchedFests([
+            {
+              value: "none",
+              label: "None",
+              departmentAccess: [],
+              organizingDept: "",
+              category: "",
+              campusHostedAt: "",
+              allowedCampuses: [],
+            },
+            ...options,
+          ]);
         }
       } catch (error) {
         console.error("Failed to fetch fests:", error);
@@ -768,6 +907,7 @@ export default function EventForm({
     setValue,
     watch,
     reset,
+    trigger,
   } = useForm<EventFormData>({
     // Schema resolver can be re-enabled later if validation is restored here.
     defaultValues: {
@@ -785,6 +925,7 @@ export default function EventForm({
       registrationFee: "",
       isTeamEvent: false,
       maxParticipants: "",
+      minParticipants: "",
       contactEmail: "",
       contactPhone: "",
       whatsappLink: "",
@@ -825,6 +966,12 @@ export default function EventForm({
           typeof defaultValues.isTeamEvent === "boolean"
             ? defaultValues.isTeamEvent
             : Number(defaultValues.maxParticipants || 1) > 1,
+        minParticipants:
+          typeof defaultValues.minParticipants === "string"
+            ? defaultValues.minParticipants
+            : Number(defaultValues.maxParticipants || 1) > 1
+            ? "2"
+            : "1",
         department: Array.isArray(defaultValues.department)
           ? defaultValues.department
           : [],
@@ -841,14 +988,28 @@ export default function EventForm({
   const watchedEventDate = useWatch({ control, name: "eventDate" });
   const watchedEndDate = useWatch({ control, name: "endDate" });
   const watchedIsTeamEvent = useWatch({ control, name: "isTeamEvent" });
+  const watchedMaxParticipants = useWatch({ control, name: "maxParticipants" });
+  const watchedMinParticipants = useWatch({ control, name: "minParticipants" });
+  const watchedFestEvent = useWatch({ control, name: "festEvent" });
 
   useEffect(() => {
     if (!watchedIsTeamEvent) {
       setValue("maxParticipants", "1", { shouldValidate: false });
-    } else if (!watch("maxParticipants")) {
-      setValue("maxParticipants", "2", { shouldValidate: false });
+      setValue("minParticipants", "1", { shouldValidate: false });
+    } else {
+      if (!watch("maxParticipants")) {
+        setValue("maxParticipants", "2", { shouldValidate: false });
+      }
+      if (!watch("minParticipants")) {
+        setValue("minParticipants", "2", { shouldValidate: false });
+      }
     }
   }, [watchedIsTeamEvent, setValue, watch]);
+
+  useEffect(() => {
+    if (!watchedIsTeamEvent) return;
+    void trigger(["minParticipants", "maxParticipants"]);
+  }, [watchedIsTeamEvent, watchedMaxParticipants, watchedMinParticipants, trigger]);
 
   useEffect(() => {
     if (watchedEventDate && !isEditMode && watch("eventDate")) {
@@ -862,6 +1023,58 @@ export default function EventForm({
         setValue("endDate", watchedEventDate, { shouldValidate: false });
     }
   }, [watchedEventDate, setValue, isEditMode, watch]);
+
+  useEffect(() => {
+    if (isEditMode) return;
+
+    if (!watchedFestEvent || watchedFestEvent === "none") {
+      setValue("department", [], {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      setValue("organizingDept", "", {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      setValue("category", "", {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      setValue("campusHostedAt", "", {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      setValue("allowedCampuses", [], {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      return;
+    }
+
+    const selectedFest = fetchedFests.find((fest) => fest.value === watchedFestEvent);
+    if (!selectedFest) return;
+
+    setValue("department", selectedFest.departmentAccess, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("organizingDept", selectedFest.organizingDept, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("category", selectedFest.category, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("campusHostedAt", selectedFest.campusHostedAt, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("allowedCampuses", selectedFest.allowedCampuses, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+  }, [isEditMode, watchedFestEvent, fetchedFests, setValue]);
 
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isNavigating, setIsNavigating] = React.useState(false);
@@ -1373,6 +1586,96 @@ export default function EventForm({
                     error={errors.festEvent}
                   />
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between h-[46px] sm:h-[48px] mt-0 sm:mt-7">
+                    <label
+                      htmlFor="isTeamEvent"
+                      className="text-sm font-medium text-gray-700"
+                    >
+                      Team event
+                    </label>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <Controller
+                        name="isTeamEvent"
+                        control={control}
+                        render={({ field }) => (
+                          <input
+                            type="checkbox"
+                            id="isTeamEvent"
+                            checked={!!field.value}
+                            onChange={(e) => field.onChange(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                        )}
+                      />
+                      <div className={toggleTrackClass}></div>
+                    </label>
+                  </div>
+                  {watchedIsTeamEvent && (
+                    <div className="space-y-3">
+                      <InputField
+                        label="Max participants per team:"
+                        name="maxParticipants"
+                        type="text"
+                        inputMode="numeric"
+                        register={register}
+                        registerOptions={{
+                          validate: (value) => {
+                            if (!watchedIsTeamEvent) return true;
+
+                            const maxRaw = String(value || "").trim();
+                            if (!maxRaw) return "Max participants per team is required";
+                            if (!/^\d+$/.test(maxRaw)) return "Enter a whole number";
+
+                            const maxValue = Number(maxRaw);
+                            if (maxValue < 2) return "Must be at least 2 for team events";
+
+                            const minRaw = String(watch("minParticipants") || "").trim();
+                            if (minRaw && /^\d+$/.test(minRaw) && maxValue < Number(minRaw)) {
+                              return "Max participants must be greater than or equal to min participants";
+                            }
+
+                            return true;
+                          },
+                        }}
+                        error={errors.maxParticipants}
+                        required
+                        placeholder="e.g., 2, 3, 5"
+                      />
+                      <InputField
+                        label="Min participants per team:"
+                        name="minParticipants"
+                        type="text"
+                        inputMode="numeric"
+                        register={register}
+                        registerOptions={{
+                          validate: (value) => {
+                            if (!watchedIsTeamEvent) return true;
+
+                            const minRaw = String(value || "").trim();
+                            if (!minRaw) return "Min participants per team is required";
+                            if (!/^\d+$/.test(minRaw)) return "Enter a whole number";
+
+                            const minValue = Number(minRaw);
+                            if (minValue < 2) return "Must be at least 2 for team events";
+
+                            const maxRaw = String(watch("maxParticipants") || "").trim();
+                            if (maxRaw && /^\d+$/.test(maxRaw) && minValue > Number(maxRaw)) {
+                              return "Min participants cannot exceed max participants";
+                            }
+
+                            return true;
+                          },
+                        }}
+                        error={errors.minParticipants}
+                        required
+                        placeholder="e.g., 2"
+                      />
+                    </div>
+                  )}
+                </div>
+
                 <InputField
                   label="Detailed description:"
                   name="detailedDescription"
@@ -1601,30 +1904,42 @@ export default function EventForm({
                   placeholder="e.g., Department of Computer Science /  Student Welfare Organization"
                 />
 
-                <div>
-                  <div className="flex items-center justify-between sm:justify-start">
-                    <label
-                      htmlFor="provideClaims"
-                      className="text-sm font-medium text-gray-700 mr-4"
-                    >
-                      Provide claims for periods missed
+                <div className="my-2">
+                  <div className="inline-flex bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 flex-wrap">
+                    <label className="text-sm font-medium text-gray-700">
+                      Are claims provided for this fest?
                     </label>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <Controller
-                        name="provideClaims"
-                        control={control}
-                        render={({ field }) => (
-                          <input
-                            type="checkbox"
-                            id="provideClaims"
-                            checked={!!field.value}
-                            onChange={(e) => field.onChange(e.target.checked)}
-                            className="sr-only peer"
+                    <Controller
+                      name="provideClaims"
+                      control={control}
+                      render={({ field }) => (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={!!field.value}
+                          aria-label="Are claims provided for this fest"
+                          onClick={() => field.onChange(!field.value)}
+                          className={`relative h-5 w-14 shrink-0 rounded-full border-2 shadow-inner transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-[1.01] hover:brightness-105 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                            field.value
+                              ? "bg-green-500 border-green-600 focus:ring-green-500"
+                              : "bg-red-500 border-red-600 focus:ring-red-500"
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none absolute inset-0 flex items-center text-[10px] font-extrabold tracking-wide text-white transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                              field.value ? "justify-start pl-2" : "justify-end pr-2"
+                            }`}
+                          >
+                            {field.value ? "YES" : "NO"}
+                          </span>
+                          <span
+                            className={`pointer-events-none absolute left-1 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white/90 bg-white shadow-sm transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                              field.value ? "translate-x-8" : "translate-x-0"
+                            }`}
                           />
-                        )}
-                      />
-                      <div className={toggleTrackClass}></div>
-                    </label>
+                        </button>
+                      )}
+                    />
                   </div>
                   {errors.provideClaims && (
                     <p className="text-red-500 text-xs mt-1">
@@ -1669,7 +1984,7 @@ export default function EventForm({
                   error={errors.whatsappLink}
                   placeholder="https://chat.whatsapp.com/your-group-invite"
                 />
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                   <InputField
                     label="Location / Venue:"
                     name="location"
@@ -1687,44 +2002,7 @@ export default function EventForm({
                     error={errors.registrationFee}
                     placeholder="0 for free event"
                   />
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between h-[46px] sm:h-[48px]">
-                    <label
-                      htmlFor="isTeamEvent"
-                      className="text-sm font-medium text-gray-700"
-                    >
-                      Team event
-                    </label>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <Controller
-                        name="isTeamEvent"
-                        control={control}
-                        render={({ field }) => (
-                          <input
-                            type="checkbox"
-                            id="isTeamEvent"
-                            checked={!!field.value}
-                            onChange={(e) => field.onChange(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                        )}
-                      />
-                      <div className={toggleTrackClass}></div>
-                    </label>
-                  </div>
                 </div>
-                {watchedIsTeamEvent && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
-                    <InputField
-                      label="Max participants / team:"
-                      name="maxParticipants"
-                      type="text"
-                      inputMode="numeric"
-                      register={register}
-                      error={errors.maxParticipants}
-                      placeholder="e.g., 2, 3, 5"
-                    />
-                  </div>
-                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                   <InputField
                     label="Contact email:"

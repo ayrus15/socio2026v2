@@ -219,6 +219,9 @@ export default function EditEventPage() {
             registrationFee: data.registration_fee?.toString() ?? "0",
             isTeamEvent: Number(data.participants_per_team ?? 1) > 1,
             maxParticipants: data.participants_per_team?.toString() ?? "1",
+            minParticipants:
+              data.min_participants?.toString() ??
+              (Number(data.participants_per_team ?? 1) > 1 ? "2" : "1"),
             contactEmail: data.organizer_email || "",
             contactPhone: data.organizer_phone?.toString() ?? "",
             whatsappLink: data.whatsapp_invite_link || "",
@@ -356,6 +359,10 @@ export default function EditEventPage() {
     payload.append(
       "max_participants",
       formData.isTeamEvent ? (formData.maxParticipants || "2") : "1"
+    );
+    payload.append(
+      "min_participants",
+      formData.isTeamEvent ? (formData.minParticipants || "2") : "1"
     );
     payload.append("organizer_email", formData.contactEmail);
     payload.append("organizer_phone", formData.contactPhone || "");

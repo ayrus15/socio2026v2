@@ -19,6 +19,7 @@ interface EventData {
   endDate: string;
   location: string;
   price: string;
+  minTeammates: number;
   numTeammates: number;
   daysLeft: number | null; // null means no deadline (open registration)
   description: string;
@@ -198,6 +199,15 @@ export default function Page() {
       },
     ];
 
+    const maxTeammates = Number(foundEvent.participants_per_team ?? 1);
+    const minTeammatesRaw = Number(
+      (foundEvent as any).min_participants ?? (maxTeammates > 1 ? 2 : 1)
+    );
+    const minTeammates =
+      maxTeammates > 1
+        ? Math.min(Math.max(minTeammatesRaw, 2), maxTeammates)
+        : 1;
+
     const finalEventData: EventData = {
       id: foundEvent.event_id,
       title: foundEvent.title || "Untitled Event",
@@ -224,7 +234,8 @@ export default function Page() {
         foundEvent.registration_fee != null && foundEvent.registration_fee > 0
           ? `₹${foundEvent.registration_fee}`
           : "Free",
-      numTeammates: foundEvent.participants_per_team ?? 1,
+      minTeammates,
+      numTeammates: maxTeammates,
       daysLeft: getDaysUntil(foundEvent.registration_deadline),
       description: foundEvent.description || "No description available.",
       rules: processedRules,
@@ -900,7 +911,7 @@ export default function Page() {
                     <p className="text-gray-800 font-medium">
                       {eventData.numTeammates <= 1
                         ? "Individual Event"
-                        : `Team Event (Up to ${eventData.numTeammates} members)`}
+                        : `Team Event (${eventData.minTeammates}-${eventData.numTeammates} members)`}
                     </p>
                   </div>
                 </div>

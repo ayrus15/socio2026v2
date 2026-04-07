@@ -97,6 +97,7 @@ const Page = () => {
   const [eventPageError, setEventPageError] = useState<string | null>(null);
 
   const [isIndividualEvent, setIsIndividualEvent] = useState(false);
+  const [minTeammates, setMinTeammates] = useState(1);
   const [maxTeammates, setMaxTeammates] = useState(1);
 
   const [submitLoading, setSubmitLoading] = useState(false);
@@ -189,6 +190,10 @@ const Page = () => {
         });
         setEventPageError(null);
         const teamSize = foundEvent.participants_per_team ?? 1;
+        const minTeamSizeRaw = Number((foundEvent as any).min_participants ?? (teamSize > 1 ? 2 : 1));
+        const minTeamSize =
+          teamSize > 1 ? Math.min(Math.max(minTeamSizeRaw, 2), teamSize) : 1;
+        setMinTeammates(minTeamSize);
         setMaxTeammates(teamSize);
         setIsIndividualEvent(teamSize <= 1);
       } else {
@@ -634,7 +639,7 @@ const Page = () => {
           <p className="text-xs sm:text-sm text-gray-300 mt-2">
             {isIndividualEvent
               ? "Individual Event"
-              : `Team Event (Up to ${maxTeammates} members)`}
+              : `Team Event (${minTeammates}-${maxTeammates} members)`}
           </p>
         </div>
       </div>

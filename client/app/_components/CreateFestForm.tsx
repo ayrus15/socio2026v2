@@ -406,6 +406,9 @@ function DepartmentAndCategoryInputs({
         >
           Department accessibility: <span className="text-red-500">*</span>
         </label>
+        <p className="text-xs text-gray-500 mb-2">
+          Departments allowed to access this fest
+        </p>
         <button
           type="button"
           id="department-trigger"
@@ -1934,7 +1937,7 @@ function CreateFestForm(props?: CreateFestProps) {
                           Event heads: (optional, max 5)
                         </h3>
                         <p className="text-xs sm:text-sm text-gray-500">
-                          Add event head emails
+                          Assign organiser access to event heads
                         </p>
                       </div>
                     </div>
@@ -1944,22 +1947,9 @@ function CreateFestForm(props?: CreateFestProps) {
                       disabled={formData.eventHeads.length >= 5}
                       aria-label="Add event head"
                       title="Add event head"
-                      className="bg-[#063168] p-3 rounded-full text-white cursor-pointer"
+                      className="bg-[#063168] px-4 py-2.5 rounded-full text-white cursor-pointer text-sm font-medium"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 4v16m8-8H4"
-                        />
-                      </svg>
+                      Add heads +
                     </button>
                   </div>
                   {formData.eventHeads.map((eventHead, index) => (

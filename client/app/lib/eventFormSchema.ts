@@ -115,6 +115,14 @@ export const eventFormSchema = z
         "Must be a positive integer"
       )
       .transform((val) => (val === "" ? undefined : val)),
+    minParticipants: z
+      .string()
+      .optional()
+      .refine(
+        (val) => !val || (Number(val) > 0 && Number.isInteger(Number(val))),
+        "Must be a positive integer"
+      )
+      .transform((val) => (val === "" ? undefined : val)),
     contactEmail: z
       .string()
       .email("Invalid email format")
@@ -195,6 +203,27 @@ export const eventFormSchema = z
     {
       message: "For team events, max participants per team must be at least 2",
       path: ["maxParticipants"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (!data.isTeamEvent) return true;
+      return !!data.minParticipants && Number(data.minParticipants) > 1;
+    },
+    {
+      message: "For team events, min participants per team must be at least 2",
+      path: ["minParticipants"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (!data.isTeamEvent) return true;
+      if (!data.minParticipants || !data.maxParticipants) return true;
+      return Number(data.minParticipants) <= Number(data.maxParticipants);
+    },
+    {
+      message: "Min participants per team cannot exceed max participants per team",
+      path: ["minParticipants"],
     }
   )
   .refine(
