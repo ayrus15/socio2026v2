@@ -799,35 +799,6 @@ const Page = () => {
                     {errors.teamName}
                   </p>
                 )}
-
-                <div className="mt-4 flex flex-col gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-[#063168]">
-                      Minimum members required: {minTeammates}
-                    </p>
-                    <p className="text-xs text-gray-600">
-                      Add optional members only if needed (up to {maxTeammates}).
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={handleRemoveTeammate}
-                      disabled={visibleTeammateCount <= minTeammates}
-                      className="rounded-full border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Remove Member
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleAddTeammate}
-                      disabled={visibleTeammateCount >= maxTeammates}
-                      className="rounded-full bg-[#154CB3] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#154cb3eb] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Add Member
-                    </button>
-                  </div>
-                </div>
               </div>
             )}
 
@@ -1037,6 +1008,38 @@ const Page = () => {
                 );
               })}
 
+            {/* Team Member Management Info Box */}
+            {!isIndividualEvent && (
+              <div className="mt-6 flex flex-col gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-[#063168]">
+                    Minimum members required: {minTeammates}
+                  </p>
+                  <p className="text-xs text-gray-600">
+                    Add optional members only if needed (up to {maxTeammates}).
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRemoveTeammate}
+                    disabled={visibleTeammateCount <= minTeammates}
+                    className="rounded-full border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Remove Member
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddTeammate}
+                    disabled={visibleTeammateCount >= maxTeammates}
+                    className="rounded-full bg-[#154CB3] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#154cb3eb] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Add Member
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Custom Fields Section - Additional fields created by event organiser */}
             {Array.isArray(selectedEvent?.custom_fields) && selectedEvent.custom_fields.length > 0 && (
               <div className="mt-8 sm:mt-10">
@@ -1068,17 +1071,6 @@ const Page = () => {
                   <span className="text-xs bg-amber-100 text-amber-700 px-3 py-1.5 rounded-full font-medium border border-amber-200 w-fit">
                     {selectedEvent.custom_fields.length} {selectedEvent.custom_fields.length === 1 ? 'Field' : 'Fields'}
                   </span>
-                </div>
-                
-                {/* Info Banner */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-5 flex items-start gap-3">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                  </svg>
-                  <p className="text-sm text-blue-800">
-                    The event organiser requires the following additional information from all participants. 
-                    Fields marked with <span className="text-red-500 font-bold">*</span> are mandatory.
-                  </p>
                 </div>
                 
                 {/* Custom Fields Container */}
