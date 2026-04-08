@@ -862,6 +862,17 @@ const normalizeBoolean = (value: unknown): boolean =>
 const isArchivedFest = (fest: any): boolean =>
   normalizeBoolean(fest?.is_archived) || normalizeBoolean(fest?.archived_effective);
 
+const normalizeFestOptionValue = (fest: any): string => {
+  const rawValue = fest?.fest_id ?? fest?.id ?? fest?.fest_title ?? fest?.title;
+  const normalized = String(rawValue ?? "").trim();
+  return normalized || "Untitled Fest";
+};
+
+const normalizeFestOptionLabel = (fest: any): string => {
+  const normalized = String(fest?.fest_title ?? fest?.title ?? "").trim();
+  return normalized || "Untitled Fest";
+};
+
 export default function EventForm({
   onSubmit,
   onSubmitDraft,
@@ -886,8 +897,8 @@ export default function EventForm({
           const options: FestOption[] = fests
             .filter((f: any) => !isArchivedFest(f))
             .map((f: any) => ({
-              value: f.fest_id || f.id || f.fest_title || f.title || "Untitled Fest",
-              label: f.fest_title || f.title || "Untitled Fest",
+              value: normalizeFestOptionValue(f),
+              label: normalizeFestOptionLabel(f),
               departmentAccess: normalizeDepartmentAccess(f.department_access),
               organizingDept:
                 typeof f.organizing_dept === "string" ? f.organizing_dept.trim() : "",
@@ -1050,7 +1061,9 @@ export default function EventForm({
   }, [watchedEventDate, setValue, isEditMode, watch]);
 
   useEffect(() => {
-    if (!watchedFestEvent || watchedFestEvent === "none") {
+    const watchedFestEventValue = String(watchedFestEvent ?? "").trim();
+
+    if (!watchedFestEventValue || watchedFestEventValue.toLowerCase() === "none") {
       setValue("department", [], {
         shouldDirty: true,
         shouldValidate: true,
@@ -1078,7 +1091,12 @@ export default function EventForm({
       return;
     }
 
-    const selectedFest = fetchedFests.find((fest) => fest.value === watchedFestEvent);
+    const selectedFest = fetchedFests.find(
+      (fest) =>
+        fest.value === watchedFestEventValue ||
+        toCanonical(fest.value) === toCanonical(watchedFestEventValue) ||
+        toCanonical(fest.label) === toCanonical(watchedFestEventValue)
+    );
     if (!selectedFest) return;
 
     setValue("department", selectedFest.departmentAccess, {
