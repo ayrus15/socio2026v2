@@ -120,6 +120,9 @@ const Page = () => {
   const [registrationError, setRegistrationError] = useState<string | null>(
     null
   );
+  const [openVisitorHelpFor, setOpenVisitorHelpFor] = useState<number | null>(
+    null
+  );
 
   useEffect(() => {
     if (!eventId) {
@@ -948,12 +951,24 @@ const Page = () => {
                   <div>
                     <label
                       htmlFor={`register-${index}`}
-                      className="block mb-1 sm:mb-2 text-xs sm:text-sm font-medium text-gray-700"
+                      className="mb-1 sm:mb-2 flex items-center text-xs sm:text-sm font-medium text-gray-700"
                     >
-                      Register number:{" "}
+                      Register Number / Visitor ID:{" "}
                       {isMandatoryMember && (
                         <span className="text-red-500">*</span>
                       )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOpenVisitorHelpFor((prev) =>
+                            prev === index ? null : index
+                          )
+                        }
+                        aria-label="What is a Visitor ID?"
+                        className="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#154CB3] text-[11px] font-bold text-[#154CB3] transition-colors hover:bg-[#154CB3] hover:text-white"
+                      >
+                        ?
+                      </button>
                     </label>
                     <input
                       type="text"
@@ -988,9 +1003,29 @@ const Page = () => {
                       } focus:outline-none focus:ring-2 focus:ring-[#154CB3] focus:border-transparent ${
                         index === 0 ? "bg-gray-100 cursor-not-allowed" : ""
                       }`}
-                      placeholder="Enter register number or VIS/STF ID..."
+                      placeholder="Enter Register number or Visitor ID..."
                       disabled={index === 0}
                     />
+                    {openVisitorHelpFor === index && (
+                      <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs sm:text-sm text-blue-900">
+                        <p className="font-semibold">What is a Visitor ID?</p>
+                        <p className="mt-1">
+                          Visitor ID is for external participants and usually
+                          starts with <span className="font-semibold">VIS</span>.
+                        </p>
+                        <p className="mt-1">
+                          You will get it after registering on SOCIO. Open your
+                          profile page and check the ID badge (like in your
+                          second screenshot).
+                        </p>
+                        <Link
+                          href="/profile"
+                          className="mt-2 inline-block font-semibold text-[#154CB3] hover:underline"
+                        >
+                          Go to Profile
+                        </Link>
+                      </div>
+                    )}
                     {errors.teammates[index]?.registerNumber && (
                       <p className="text-red-500 text-xs sm:text-sm mt-1">
                         {errors.teammates[index].registerNumber}
