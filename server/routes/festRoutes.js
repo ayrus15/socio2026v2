@@ -78,6 +78,9 @@ const parseComparableDate = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const asBoolean = (value) =>
+  value === true || value === 1 || value === "1" || value === "true";
+
 const deriveFestStatusFromDates = (
   openingDateValue,
   closingDateValue,
@@ -187,8 +190,6 @@ const getFestByIdFromCandidates = async (festId, primaryTable) => {
 
 const deriveFestsFromEvents = (events, festRegistrationCounts = {}) => {
   const derivedFestMap = new Map();
-  const asBoolean = (value) => value === true || value === 1 || value === "1" || value === "true";
-
   for (const event of events || []) {
     const festKey = String(event?.fest_id || event?.fest || "").trim();
     if (!festKey) continue;
@@ -410,7 +411,7 @@ router.get("/", optionalAuth, checkRoleExpiration, async (req, res) => {
     const isAdminOrOrganizer = userInfo && (userInfo.is_masteradmin || userInfo.is_organiser);
     
     if (!isAdminOrOrganizer) {
-      processedFests = processedFests.filter((fest) => !fest.is_archived);
+      processedFests = processedFests.filter((fest) => !fest.is_archived && !asBoolean(fest.is_draft));
 
       console.log(`[Archive Filter] Non-organizer viewing ${processedFests.length} non-archived fests`);
     } else {
@@ -420,7 +421,7 @@ router.get("/", optionalAuth, checkRoleExpiration, async (req, res) => {
     if (normalizedArchive === "archived") {
       processedFests = processedFests.filter((fest) => Boolean(fest.is_archived));
     } else if (normalizedArchive === "active") {
-      processedFests = processedFests.filter((fest) => !fest.is_archived);
+      processedFests = processedFests.filter((fest) => !fest.is_archived && !asBoolean(fest.is_draft));
     }
 
     const hasExplicitSortBy = typeof sortBy === "string" && sortBy.trim() !== "";
@@ -582,6 +583,27 @@ router.post(
     try {
       const festTable = await getFestTableForDatabase(queryAll);
       const festData = req.body;
+      const draftPreferenceInput = pickDefined(
+        festData.is_draft,
+        festData.isDraft,
+        festData.save_as_draft
+      );
+      const hasDraftPreference =
+        draftPreferenceInput !== undefined &&
+        draftPreferenceInput !== null &&
+        String(draftPreferenceInput).trim() !== "";
+      const shouldSaveAsDraft = hasDraftPreference && asBoolean(draftPreferenceInput);
+      const sendNotificationsInput = pickDefined(
+        festData.send_notifications,
+        festData.sendNotifications
+      );
+      const hasExplicitNotificationPreference =
+        sendNotificationsInput !== undefined &&
+        sendNotificationsInput !== null &&
+        String(sendNotificationsInput).trim() !== "";
+      const shouldSendNotifications =
+        !shouldSaveAsDraft &&
+        (hasExplicitNotificationPreference ? asBoolean(sendNotificationsInput) : true);
 
       // Basic validation
       const title = festData.festTitle || festData.title;
@@ -669,6 +691,7 @@ router.post(
         allowed_campuses: festData.allowed_campuses || festData.allowedCampuses || [],
         department_hosted_at: festData.department_hosted_at || festData.departmentHostedAt || null,
         allow_outsiders: festData.allow_outsiders === true || festData.allow_outsiders === 'true' || festData.allowOutsiders === true || festData.allowOutsiders === 'true' ? true : false,
+        is_draft: shouldSaveAsDraft,
       };
 
       const inserted = await insert(festTable, [festPayload]);
@@ -697,21 +720,23 @@ router.post(
       }
 
       // Send notifications to all users about the new fest (non-blocking)
-      sendBroadcastNotification({
-        title: 'New Fest Announced',
-        message: `${festPayload.fest_title} — Don't miss this fest!`,
-        type: 'info',
-        event_id: fest_id,
-        event_title: festPayload.fest_title,
-        action_url: `/fest/${fest_id}`
-      }).then(() => {
-        console.log(`✅ Sent notifications for new fest: ${festPayload.fest_title}`);
-      }).catch((notifError) => {
-        console.error('❌ Failed to send fest notifications:', notifError);
-      });
+      if (shouldSendNotifications) {
+        sendBroadcastNotification({
+          title: 'New Fest Announced',
+          message: `${festPayload.fest_title} — Don't miss this fest!`,
+          type: 'info',
+          event_id: fest_id,
+          event_title: festPayload.fest_title,
+          action_url: `/fest/${fest_id}`
+        }).then(() => {
+          console.log(`✅ Sent notifications for new fest: ${festPayload.fest_title}`);
+        }).catch((notifError) => {
+          console.error('❌ Failed to send fest notifications:', notifError);
+        });
+      }
 
       // Push to UniversityGated if outsiders are enabled (non-blocking)
-      if (isGatedEnabled() && festPayload.allow_outsiders) {
+      if (!shouldSaveAsDraft && isGatedEnabled() && festPayload.allow_outsiders) {
         pushFestToGated(
           festPayload,
           req.userInfo?.email || festPayload.created_by,
@@ -772,6 +797,22 @@ router.put(
       const allowedCampusesInput = pickDefined(updateData.allowed_campuses, updateData.allowedCampuses);
       const departmentHostedAtInput = pickDefined(updateData.department_hosted_at, updateData.departmentHostedAt);
       const allowOutsidersInput = pickDefined(updateData.allow_outsiders, updateData.allowOutsiders);
+      const draftPreferenceInput = pickDefined(updateData.is_draft, updateData.isDraft, updateData.save_as_draft);
+      const hasDraftPreference =
+        draftPreferenceInput !== undefined &&
+        draftPreferenceInput !== null &&
+        String(draftPreferenceInput).trim() !== "";
+      const shouldSaveAsDraft = hasDraftPreference ? asBoolean(draftPreferenceInput) : false;
+      const sendNotificationsInput = pickDefined(updateData.send_notifications, updateData.sendNotifications);
+      const hasExplicitNotificationPreference =
+        sendNotificationsInput !== undefined &&
+        sendNotificationsInput !== null &&
+        String(sendNotificationsInput).trim() !== "";
+      const wasDraftBeforeUpdate = asBoolean(existingFest?.is_draft);
+      const isPublishTransition = hasDraftPreference && !shouldSaveAsDraft && wasDraftBeforeUpdate;
+      const shouldSendPublishNotifications =
+        isPublishTransition &&
+        (hasExplicitNotificationPreference ? asBoolean(sendNotificationsInput) : true);
       const parsedEventHeadsInput =
         eventHeadsInput !== undefined
           ? parseJsonLikeField(eventHeadsInput, [])
@@ -842,6 +883,7 @@ router.put(
         ["allowed_campuses", parseJsonLikeField(allowedCampusesInput, [])],
         ["department_hosted_at", departmentHostedAtInput],
         ["allow_outsiders", allowOutsidersInput !== undefined ? (allowOutsidersInput === true || allowOutsidersInput === 'true') : undefined],
+        ["is_draft", hasDraftPreference ? shouldSaveAsDraft : undefined],
       ];
 
       for (const [key, value] of mapFields) {
@@ -914,7 +956,7 @@ router.put(
       // Push to UniversityGated if outsiders are now enabled (non-blocking)
       if (isGatedEnabled() && updatedFest) {
         const outsidersEnabled = updatedFest.allow_outsiders === true || updatedFest.allow_outsiders === 'true';
-        if (outsidersEnabled) {
+        if (outsidersEnabled && !asBoolean(updatedFest.is_draft)) {
           pushFestToGated(
             updatedFest,
             req.userInfo?.email || updatedFest.created_by,
@@ -925,6 +967,19 @@ router.put(
             console.error(`❌ Failed to push updated fest to Gated:`, gatedError.message);
           });
         }
+      }
+
+      if (shouldSendPublishNotifications) {
+        sendBroadcastNotification({
+          title: "Fest Published",
+          message: `${updatedFest.fest_title} is now live!`,
+          type: "info",
+          event_id: festId,
+          event_title: updatedFest.fest_title,
+          action_url: `/fest/${festId}`,
+        }).catch((notifError) => {
+          console.error("❌ Failed to send fest publish notifications:", notifError);
+        });
       }
 
       // Grant organiser access to event heads with expiration dates

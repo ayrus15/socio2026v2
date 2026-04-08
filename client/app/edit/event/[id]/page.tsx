@@ -33,6 +33,7 @@ export default function EditEventPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isArchived, setIsArchived] = useState(false);
+  const [isDraft, setIsDraft] = useState(false);
   const [isArchiveUpdating, setIsArchiveUpdating] = useState(false);
 
   useEffect(() => {
@@ -252,7 +253,13 @@ export default function EditEventPage() {
             data.archived_effective === 1 ||
             data.archived_effective === "1" ||
             data.archived_effective === "true";
+          const draftValue =
+            data.is_draft === true ||
+            data.is_draft === 1 ||
+            data.is_draft === "1" ||
+            data.is_draft === "true";
           setIsArchived(Boolean(manualArchived || effectiveArchived));
+          setIsDraft(Boolean(draftValue));
           setExistingImageFileUrl(data.event_image_url || null);
           setExistingBannerFileUrl(data.banner_url || null);
           setExistingPdfFileUrl(data.pdf_url || null);
@@ -327,9 +334,9 @@ export default function EditEventPage() {
     options?: { archiveAsDraft?: boolean }
   ) => {
     const archiveAsDraft = Boolean(options?.archiveAsDraft);
-    const publishFromArchivedEvent = !archiveAsDraft && isArchived;
+    const publishFromDraft = !archiveAsDraft && isDraft;
     const shouldSendPublishNotifications =
-      publishFromArchivedEvent && formData.sendNotifications !== false;
+      publishFromDraft && formData.sendNotifications !== false;
 
     if (!session) {
       setErrorMessage(
@@ -378,8 +385,10 @@ export default function EditEventPage() {
     payload.append("claims_applicable", String(formData.provideClaims));
     payload.append("on_spot", String(formData.onSpot || false));
     if (archiveAsDraft) {
-      payload.append("is_archived", "true");
-    } else if (publishFromArchivedEvent) {
+      payload.append("is_draft", "true");
+      payload.append("is_archived", "false");
+    } else if (publishFromDraft) {
+      payload.append("is_draft", "false");
       payload.append("is_archived", "false");
       payload.append(
         "send_notifications",
@@ -520,12 +529,18 @@ export default function EditEventPage() {
             resultJson.event.is_archived === 1 ||
             resultJson.event.is_archived === "1" ||
             resultJson.event.is_archived === "true";
+          const stillDraft =
+            resultJson.event.is_draft === true ||
+            resultJson.event.is_draft === 1 ||
+            resultJson.event.is_draft === "1" ||
+            resultJson.event.is_draft === "true";
           setIsArchived(Boolean(stillArchived));
+          setIsDraft(Boolean(stillDraft));
         }
 
         const successMessage = archiveAsDraft
           ? "Draft saved successfully!"
-          : publishFromArchivedEvent
+          : publishFromDraft
             ? "Event published successfully!"
             : "Event updated successfully!";
         
@@ -553,7 +568,7 @@ export default function EditEventPage() {
         // Still show success if response was ok
         const fallbackMessage = archiveAsDraft
           ? "Draft saved successfully!"
-          : publishFromArchivedEvent
+          : publishFromDraft
             ? "Event published successfully!"
             : "Event updated successfully!";
         toast.success(fallbackMessage, { duration: 3000 });
@@ -652,6 +667,7 @@ export default function EditEventPage() {
         existingBannerFileUrl={existingBannerFileUrl}
         existingPdfFileUrl={existingPdfFileUrl}
         isArchived={isArchived}
+        isDraft={isDraft}
         isArchiveUpdating={isArchiveUpdating}
         onToggleArchive={handleToggleArchive}
       />

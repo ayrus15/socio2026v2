@@ -15,6 +15,7 @@ interface FestDataForEdit {
   contactPhone: string;
   eventHeads: { email: string; expiresAt: string | null }[];
   organizingDept: string;
+  isDraft: boolean;
 }
 
 const EditPage = () => {
@@ -80,6 +81,11 @@ const EditPage = () => {
               contactPhone: data.fest.contact_phone || "",
               eventHeads: transformedEventHeads,
               organizingDept: data.fest.organizing_dept || "",
+              isDraft:
+                data.fest.is_draft === true ||
+                data.fest.is_draft === 1 ||
+                data.fest.is_draft === "1" ||
+                data.fest.is_draft === "true",
             };
             setFestData(fetched);
 
@@ -145,6 +151,7 @@ const EditPage = () => {
       existingImageFileUrl={existingImageFileUrl}
       existingBannerFileUrl={existingBannerFileUrl}
       existingPdfFileUrl={existingPdfFileUrl}
+      isDraft={Boolean(festData?.isDraft)}
     />
   );
 };

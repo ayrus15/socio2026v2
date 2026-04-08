@@ -163,7 +163,10 @@ export default function CreateEventPage() {
 
     formData.append("claims_applicable", String(dataFromHookForm.provideClaims));
     formData.append("send_notifications", String(shouldSendNotifications));
-    formData.append("is_archived", String(saveAsDraft));
+    formData.append("is_draft", String(saveAsDraft));
+    if (saveAsDraft) {
+      formData.append("is_archived", "false");
+    }
     formData.append("on_spot", String(dataFromHookForm.onSpot));
     
     // Outsider registration fields

@@ -46,6 +46,7 @@ interface Fest {
   event_heads?: Array<{ email?: string | null } | string>;
   campus_hosted_at?: string | null;
   is_archived?: boolean;
+  is_draft?: boolean;
   archived_at?: string | null;
 }
 
@@ -143,10 +144,15 @@ interface MappedFestCardProps {
 const MappedFestCard = ({ fest, baseUrl, isArchiveUpdating = false, onArchiveToggle }: MappedFestCardProps) => {
   const isPast = fest.closing_date ? new Date(fest.closing_date) < new Date() : false;
   const isArchived = fest.is_archived ?? false;
+  const isDraft =
+    fest.is_draft === true ||
+    (fest.is_draft as any) === 1 ||
+    (fest.is_draft as any) === "1" ||
+    (fest.is_draft as any) === "true";
 
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col hover:shadow-md transition-all duration-300 ${
-      isArchived ? "opacity-60 grayscale" : ""
+      isArchived ? "opacity-60 grayscale" : isDraft ? "opacity-80 saturate-0" : ""
     }`}>
       <div className="h-48 relative bg-slate-100">
         <img
@@ -154,13 +160,24 @@ const MappedFestCard = ({ fest, baseUrl, isArchiveUpdating = false, onArchiveTog
           alt={fest.fest_title}
           className="w-full h-full object-cover"
         />
+        {isDraft && (
+          <div className="absolute inset-0 bg-white/65 flex items-center justify-center pointer-events-none">
+            <span className="text-4xl sm:text-5xl font-black tracking-[0.25em] text-slate-800/70">DRAFT</span>
+          </div>
+        )}
         <div className="absolute top-3 right-3">
           <span
             className={`px-3 py-1.5 text-[10px] font-bold rounded-full tracking-wider shadow-sm flex items-center ${
-              isArchived ? "bg-purple-600 text-white" : isPast ? "bg-[#333333] text-white" : "bg-white text-emerald-600"
+              isDraft
+                ? "bg-slate-900 text-white"
+                : isArchived
+                  ? "bg-purple-600 text-white"
+                  : isPast
+                    ? "bg-[#333333] text-white"
+                    : "bg-white text-emerald-600"
             }`}
           >
-            {isArchived ? "ARCHIVED" : isPast ? "PAST" : "UPCOMING"}
+            {isDraft ? "DRAFT" : isArchived ? "ARCHIVED" : isPast ? "PAST" : "UPCOMING"}
           </span>
         </div>
       </div>
@@ -180,7 +197,11 @@ const MappedFestCard = ({ fest, baseUrl, isArchiveUpdating = false, onArchiveTog
           <Calendar className="w-4 h-4 text-slate-400" />
           {formatDateFull(fest.opening_date, "TBD")}
         </div>
-        {isArchived ? (
+        {isDraft ? (
+          <Link href={`/${baseUrl}/${fest.fest_id}`} className="flex items-center gap-1.5 text-[#154cb3] font-semibold text-sm hover:underline">
+            Edit <ArrowRight className="w-4 h-4" />
+          </Link>
+        ) : isArchived ? (
           <button
             onClick={(e) => {
               e.preventDefault();
@@ -218,6 +239,7 @@ type EventArchiveSource = "manual" | "auto" | null;
 const MappedEventCard = ({
   event,
   baseUrl,
+  isDraft,
   isArchived,
   archiveSource,
   onToggleArchive,
@@ -226,6 +248,7 @@ const MappedEventCard = ({
 }: {
   event: ContextEvent;
   baseUrl: string;
+  isDraft: boolean;
   isArchived: boolean;
   archiveSource: EventArchiveSource;
   onToggleArchive: (eventId: string, shouldArchive: boolean) => void;
@@ -233,16 +256,18 @@ const MappedEventCard = ({
   authToken?: string | null;
 }) => {
   const isPast = event.event_date ? new Date(event.event_date) < new Date() : false;
-  const statusLabel = isArchived ? "ARCHIVED" : isPast ? "PAST" : "UPCOMING";
-  const statusClassName = isArchived
-    ? "bg-amber-100 text-amber-800"
-    : isPast
-      ? "bg-[#333333] text-white"
-      : "bg-white text-emerald-600";
+  const statusLabel = isDraft ? "DRAFT" : isArchived ? "ARCHIVED" : isPast ? "PAST" : "UPCOMING";
+  const statusClassName = isDraft
+    ? "bg-slate-900 text-white"
+    : isArchived
+      ? "bg-amber-100 text-amber-800"
+      : isPast
+        ? "bg-[#333333] text-white"
+        : "bg-white text-emerald-600";
 
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col hover:shadow-md transition-all duration-300 ${
-      isArchived ? "opacity-60 grayscale" : ""
+      isArchived ? "opacity-60 grayscale" : isDraft ? "opacity-80 saturate-0" : ""
     }`}>
       <div className="h-48 relative bg-slate-100">
         <img
@@ -250,6 +275,11 @@ const MappedEventCard = ({
           alt={event.title}
           className="w-full h-full object-cover"
         />
+        {isDraft && (
+          <div className="absolute inset-0 bg-white/65 flex items-center justify-center pointer-events-none">
+            <span className="text-4xl sm:text-5xl font-black tracking-[0.25em] text-slate-800/70">DRAFT</span>
+          </div>
+        )}
         <div className="absolute top-3 right-3">
           <span className={`px-3 py-1.5 text-[10px] font-bold rounded-full tracking-wider shadow-sm flex items-center ${statusClassName}`}>
             {statusLabel}
@@ -273,40 +303,46 @@ const MappedEventCard = ({
           {formatDateFull(event.event_date, "TBD")}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href={`/event/${event.event_id}/participants`}
-            className="flex items-center gap-1.5 text-[#154cb3] font-semibold text-sm hover:underline"
-          >
-            View Participants
-          </Link>
-          <Link
-            href={`/attendance?eventId=${encodeURIComponent(event.event_id)}&eventTitle=${encodeURIComponent(event.title)}`}
-            className="flex items-center gap-1.5 text-emerald-700 font-semibold text-sm hover:underline"
-          >
-            Mark Attendance
-          </Link>
-          <button
-            type="button"
-            disabled={isArchiveActionLoading}
-            onClick={() => onToggleArchive(event.event_id, !isArchived)}
-            className={`flex items-center gap-1.5 font-semibold text-sm transition-colors cursor-pointer ${
-              isArchiveActionLoading
-                ? "text-slate-400 cursor-not-allowed"
-                : isArchived
-                  ? "text-emerald-700 hover:text-emerald-800"
-                  : "text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            {isArchiveActionLoading ? "Saving..." : isArchived ? "Publish" : "Archive"} <History className="w-4 h-4" />
-          </button>
+          {!isDraft && (
+            <>
+              <Link
+                href={`/event/${event.event_id}/participants`}
+                className="flex items-center gap-1.5 text-[#154cb3] font-semibold text-sm hover:underline"
+              >
+                View Participants
+              </Link>
+              <Link
+                href={`/attendance?eventId=${encodeURIComponent(event.event_id)}&eventTitle=${encodeURIComponent(event.title)}`}
+                className="flex items-center gap-1.5 text-emerald-700 font-semibold text-sm hover:underline"
+              >
+                Mark Attendance
+              </Link>
+              <button
+                type="button"
+                disabled={isArchiveActionLoading}
+                onClick={() => onToggleArchive(event.event_id, !isArchived)}
+                className={`flex items-center gap-1.5 font-semibold text-sm transition-colors cursor-pointer ${
+                  isArchiveActionLoading
+                    ? "text-slate-400 cursor-not-allowed"
+                    : isArchived
+                      ? "text-emerald-700 hover:text-emerald-800"
+                      : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {isArchiveActionLoading ? "Saving..." : isArchived ? "Restore" : "Archive"} <History className="w-4 h-4" />
+              </button>
+            </>
+          )}
           <Link href={`/${baseUrl}/${event.event_id}`} className="flex items-center gap-1.5 text-[#154cb3] font-semibold text-sm hover:underline">
             Edit <Pencil className="w-4 h-4" />
           </Link>
-          <EventReminderButton
-            eventId={event.event_id}
-            eventTitle={event.title}
-            authToken={authToken || ""}
-          />
+          {!isDraft && (
+            <EventReminderButton
+              eventId={event.event_id}
+              eventTitle={event.title}
+              authToken={authToken || ""}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -452,6 +488,7 @@ export default function ManageDashboard() {
             ? fest.eventHeads
             : [],
         campus_hosted_at: fest.campus_hosted_at || fest.campus || null,
+        is_draft: fest.is_draft === true,
         is_archived: fest.is_archived === true,
         archived_at: fest.archived_at || null,
       }));
@@ -528,7 +565,7 @@ export default function ManageDashboard() {
           return;
         }
 
-        const response = await fetch(`${API_URL}/api/events?sortBy=created_at&sortOrder=desc`, {
+        const response = await fetch(`${API_URL}/api/events?sortBy=created_at&sortOrder=desc&include_drafts=true`, {
           headers: {
             Authorization: `Bearer ${authToken}`,
           },
@@ -726,7 +763,7 @@ export default function ManageDashboard() {
         return;
       }
 
-      const response = await fetch(`${API_URL}/api/events?sortBy=created_at&sortOrder=desc`, {
+      const response = await fetch(`${API_URL}/api/events?sortBy=created_at&sortOrder=desc&include_drafts=true`, {
         headers: {
           Authorization: `Bearer ${authToken}`,
         },
@@ -1036,7 +1073,7 @@ export default function ManageDashboard() {
       toast.success(
         shouldArchive
           ? "✅ Event archived successfully."
-          : "✅ Event published successfully."
+          : "✅ Event restored successfully."
       );
       console.log(`✅ Archive update successful`);
       
@@ -1328,11 +1365,17 @@ export default function ManageDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {paginatedEvents.items.map((event) => {
                         const archiveState = getEffectiveArchiveState(event);
+                        const isDraft =
+                          (event as any).is_draft === true ||
+                          (event as any).is_draft === 1 ||
+                          (event as any).is_draft === "1" ||
+                          (event as any).is_draft === "true";
                         return (
                           <MappedEventCard
                             key={event.event_id}
                             event={event}
                             baseUrl="edit/event"
+                            isDraft={isDraft}
                             isArchived={archiveState.isArchived}
                             archiveSource={archiveState.archiveSource}
                             onToggleArchive={handleToggleArchive}

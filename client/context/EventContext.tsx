@@ -15,6 +15,7 @@ export interface EventForCard {
   organizing_dept: string;
   allow_outsiders?: boolean | null;
   is_archived?: boolean | null;
+  is_draft?: boolean | null;
 }
 
 export interface CarouselDisplayImage {
@@ -79,6 +80,7 @@ export interface FetchedEvent {
   campus_hosted_at?: string | null;
   allowed_campuses?: string[] | string | null;
   is_archived?: boolean | null;
+  is_draft?: boolean | null;
   archived_at?: string | null;
   archived_by?: string | null;
 }
@@ -238,6 +240,7 @@ const toEventCard = (event: FetchedEvent): EventForCard => {
     organizing_dept: event.organizing_dept || "TBD",
     allow_outsiders: event.allow_outsiders ?? false,
     is_archived: event.is_archived,
+    is_draft: event.is_draft,
   };
 };
 

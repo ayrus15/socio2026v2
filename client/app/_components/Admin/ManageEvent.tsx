@@ -721,6 +721,7 @@ interface EventFormProps {
   existingBannerFileUrl?: string | null;
   existingPdfFileUrl?: string | null;
   isArchived?: boolean;
+  isDraft?: boolean;
   isArchiveUpdating?: boolean;
   onToggleArchive?: () => void;
 }
@@ -864,6 +865,7 @@ export default function EventForm({
   existingBannerFileUrl,
   existingPdfFileUrl,
   isArchived,
+  isDraft,
   isArchiveUpdating,
   onToggleArchive,
 }: EventFormProps) {
@@ -1090,6 +1092,7 @@ export default function EventForm({
   const [isNavigating, setIsNavigating] = React.useState(false);
   const [pendingSuccess, setPendingSuccess] = React.useState<"publish" | "draft" | "delete" | null>(null);
   const [successAction, setSuccessAction] = React.useState<"publish" | "draft">("publish");
+  const [wasDraftOnSubmit, setWasDraftOnSubmit] = React.useState(false);
   const [modalVisible, setModalVisible] = React.useState(false);
 
   const processSubmit: SubmitHandler<EventFormData> = async (data) => {
@@ -1098,6 +1101,7 @@ export default function EventForm({
       return;
     }
     try {
+      setWasDraftOnSubmit(Boolean(isDraft));
       await onSubmit(data);
       setSuccessAction("publish");
       // Don't show modal yet — let the overlay finish its animation first
@@ -1186,6 +1190,7 @@ export default function EventForm({
   const handleNavigationToDashboard = () => {
     setModalVisible(false);
     setSuccessAction("publish");
+    setWasDraftOnSubmit(false);
     setTimeout(() => {
       setIsNavigating(true);
       router.push("/manage");
@@ -1461,14 +1466,14 @@ export default function EventForm({
                 {successAction === "draft"
                   ? "Draft Saved!"
                   : `Event ${
-                      isEditMode && isArchived ? "Published!" : isEditMode ? "Updated!" : "Published!"
+                      isEditMode && wasDraftOnSubmit ? "Published!" : isEditMode ? "Updated!" : "Published!"
                     }`}
               </h2>
               <p className="text-gray-600 mb-6 text-sm sm:text-base">
                 {successAction === "draft"
-                  ? "Your event has been saved as a draft and is archived. You can publish it later by unarchiving it."
+                  ? "Your event has been saved as a draft. It is hidden until you publish it."
                   : `Your event has been successfully ${
-                      isEditMode && isArchived ? "published" : isEditMode ? "updated" : "published"
+                      isEditMode && wasDraftOnSubmit ? "published" : isEditMode ? "updated" : "published"
                     }.`}
               </p>
               <button
@@ -2190,7 +2195,7 @@ export default function EventForm({
                   
                   {isEditMode && (
                     <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
-                      {onToggleArchive && (
+                      {onToggleArchive && !isDraft && (
                         <button
                           type="button"
                           onClick={onToggleArchive}
@@ -2203,7 +2208,7 @@ export default function EventForm({
                                 : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 focus:ring-amber-500"
                           }`}
                         >
-                          {isArchiveUpdating ? "Saving..." : isArchived ? "Publish" : "Archive"}
+                          {isArchiveUpdating ? "Saving..." : isArchived ? "Restore" : "Archive"}
                         </button>
                       )}
                       <button
@@ -2269,12 +2274,12 @@ export default function EventForm({
                   >
                     {isSubmittingProp || rhfIsSubmitting
                       ? isEditMode
-                        ? isArchived
+                        ? isDraft
                           ? "Publishing..."
                           : "Updating..."
                         : "Publishing..."
                       : isEditMode
-                      ? isArchived
+                      ? isDraft
                         ? "Publish Event"
                         : "Update Event"
                       : "Publish Event"}

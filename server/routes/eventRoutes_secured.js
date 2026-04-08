@@ -243,10 +243,14 @@ const persistAutoArchivedEvents = async (events) => {
 
 
 // GET all events - PUBLIC ACCESS (no auth required)
-router.get("/", async (req, res) => {
+router.get("/", optionalAuth, checkRoleExpiration, async (req, res) => {
   try {
-    const { page, pageSize, search, status, sortBy, sortOrder, archive } = req.query;
+    const { page, pageSize, search, status, sortBy, sortOrder, archive, include_drafts } = req.query;
     const today = new Date().toISOString().split('T')[0];
+    const includeDraftsRequested =
+      typeof include_drafts === "string" && include_drafts.toLowerCase() === "true";
+    const canViewDrafts = Boolean(req.userInfo?.is_masteradmin || req.userInfo?.is_organiser);
+    const shouldIncludeDrafts = includeDraftsRequested && canViewDrafts;
     
     let queryOptions = { 
       order: { column: "created_at", ascending: false } 
@@ -319,6 +323,10 @@ router.get("/", async (req, res) => {
       processedEvents = processedEvents.filter((event) => event.archived_effective);
     } else if (normalizedArchive === "active") {
       processedEvents = processedEvents.filter((event) => !event.archived_effective);
+    }
+
+    if (!shouldIncludeDrafts) {
+      processedEvents = processedEvents.filter((event) => !asBoolean(event.is_draft));
     }
 
     const normalizedSortBy = typeof sortBy === "string" ? sortBy : "date";
@@ -475,19 +483,22 @@ router.post(
         prizes,
         max_participants,
         send_notifications,
+        is_draft,
         is_archived,
         save_as_draft
       } = req.body;
 
-      const shouldArchiveAsDraft =
-        asBoolean(is_archived) ||
+      const shouldSaveAsDraft =
+        asBoolean(is_draft) ||
         asBoolean(save_as_draft);
+      const shouldArchiveOnCreate =
+        asBoolean(is_archived) && !shouldSaveAsDraft;
       const hasExplicitNotificationPreference =
         send_notifications !== undefined &&
         send_notifications !== null &&
         String(send_notifications).trim() !== "";
       const shouldSendNotifications =
-        !shouldArchiveAsDraft &&
+        !shouldSaveAsDraft &&
         (hasExplicitNotificationPreference ? asBoolean(send_notifications) : true);
 
       // Validation
@@ -633,10 +644,11 @@ router.post(
         auth_uuid: req.userId,
         registration_deadline: req.body.registration_deadline || null,
         total_participants: 0,
-        is_archived: shouldArchiveAsDraft,
-        archived_at: shouldArchiveAsDraft ? new Date().toISOString() : null,
-        archived_by: shouldArchiveAsDraft
-          ? req.userInfo?.email || req.userId || "system:draft"
+        is_draft: shouldSaveAsDraft,
+        is_archived: shouldArchiveOnCreate,
+        archived_at: shouldArchiveOnCreate ? new Date().toISOString() : null,
+        archived_by: shouldArchiveOnCreate
+          ? req.userInfo?.email || req.userId || "system:create_archive"
           : null,
         // Outsider & campus fields
         allow_outsiders: req.body.allow_outsiders === "true" || req.body.allow_outsiders === true ? 1 : 0,
@@ -673,7 +685,7 @@ router.post(
       }
 
       // Push to UniversityGated if outsiders are enabled (non-blocking)
-      if (!shouldArchiveAsDraft && isGatedEnabled()) {
+      if (!shouldSaveAsDraft && !shouldArchiveOnCreate && isGatedEnabled()) {
         const createdEvent = created[0];
         shouldPushEventToGated(createdEvent, queryOne).then(async (shouldPush) => {
           if (shouldPush) {
@@ -771,16 +783,6 @@ router.patch(
       }
 
       const archiveValue = shouldArchive;
-      const rawSendNotifications = req.body?.send_notifications;
-      const hasExplicitNotificationPreference =
-        rawSendNotifications !== undefined &&
-        rawSendNotifications !== null &&
-        String(rawSendNotifications).trim() !== "";
-      const shouldSendPublishNotifications =
-        !archiveValue &&
-        (hasExplicitNotificationPreference
-          ? asBoolean(rawSendNotifications)
-          : true);
       const nowIso = new Date().toISOString();
       const buildArchivePayload = (includeArchivedBy = true) => ({
         is_archived: archiveValue,
@@ -818,32 +820,8 @@ router.patch(
       const updatedEvent = updatedRows[0];
       const archiveState = deriveArchiveState(updatedEvent);
 
-      if (shouldSendPublishNotifications) {
-        const eventTitle = updatedEvent?.title || "An event";
-        const publishedEventId = updatedEvent?.event_id || eventId;
-        sendBroadcastNotification({
-          title: "Event Published",
-          message: `${eventTitle} is now live! Check it out.`,
-          type: "info",
-          event_id: publishedEventId,
-          event_title: eventTitle,
-          action_url: `/event/${publishedEventId}`,
-        })
-          .then(() => {
-            console.log(
-              `✅ Sent publish notifications for unarchived event: ${eventTitle}`
-            );
-          })
-          .catch((notifError) => {
-            console.error(
-              "❌ Failed to send publish notifications on unarchive:",
-              notifError
-            );
-          });
-      }
-
       return res.status(200).json({
-        message: archiveValue ? "Event archived successfully." : "Event published successfully.",
+        message: archiveValue ? "Event archived successfully." : "Event restored successfully.",
         event: {
           ...updatedEvent,
           fest: updatedEvent.fest_id || null, // Map fest_id to fest for frontend compatibility
@@ -972,6 +950,7 @@ router.put(
         prizes,
         max_participants,
         send_notifications,
+        is_draft,
         is_archived,
         save_as_draft
       } = req.body;
@@ -979,19 +958,28 @@ router.put(
       const rawArchivePreference =
         is_archived !== undefined && is_archived !== null && String(is_archived).trim() !== ""
           ? is_archived
-          : save_as_draft;
+          : undefined;
       const hasArchivePreference =
         rawArchivePreference !== undefined &&
         rawArchivePreference !== null &&
         String(rawArchivePreference).trim() !== "";
       const shouldArchiveFromRequest = asBoolean(rawArchivePreference);
+      const rawDraftPreference =
+        is_draft !== undefined && is_draft !== null && String(is_draft).trim() !== ""
+          ? is_draft
+          : save_as_draft;
+      const hasDraftPreference =
+        rawDraftPreference !== undefined &&
+        rawDraftPreference !== null &&
+        String(rawDraftPreference).trim() !== "";
+      const shouldDraftFromRequest = asBoolean(rawDraftPreference);
       const hasExplicitNotificationPreference =
         send_notifications !== undefined &&
         send_notifications !== null &&
         String(send_notifications).trim() !== "";
-      const wasArchivedBeforeUpdate = asBoolean(event?.is_archived);
+      const wasDraftBeforeUpdate = asBoolean(event?.is_draft);
       const isPublishTransition =
-        hasArchivePreference && !shouldArchiveFromRequest && wasArchivedBeforeUpdate;
+        hasDraftPreference && !shouldDraftFromRequest && wasDraftBeforeUpdate;
       const shouldSendPublishNotifications =
         isPublishTransition &&
         (hasExplicitNotificationPreference ? asBoolean(send_notifications) : true);
@@ -1074,12 +1062,23 @@ router.put(
             is_archived: shouldArchiveFromRequest,
             archived_at: shouldArchiveFromRequest ? new Date().toISOString() : null,
             archived_by: shouldArchiveFromRequest
-              ? req.userInfo?.email || req.userId || "system:draft"
+              ? req.userInfo?.email || req.userId || "system:manual_archive"
               : MANUAL_UNARCHIVE_OVERRIDE,
           }
         : shouldAutoUnarchive
           ? { is_archived: false, archived_at: null, archived_by: null }
           : {};
+
+      const draftOverridePayload = hasDraftPreference
+        ? shouldDraftFromRequest
+          ? { is_draft: true, is_archived: false, archived_at: null, archived_by: null }
+          : {
+              is_draft: false,
+              ...(wasDraftBeforeUpdate
+                ? { is_archived: false, archived_at: null, archived_by: null }
+                : {}),
+            }
+        : {};
 
       const updateData = {
         title: title.trim(),
@@ -1116,7 +1115,8 @@ router.put(
         allowed_campuses: parsedAllowedCampuses,
         min_participants: parseOptionalInt(req.body.min_participants || req.body.minParticipants, 1),
         updated_at: new Date().toISOString(),
-        ...archiveOverridePayload
+        ...archiveOverridePayload,
+        ...draftOverridePayload
       };
 
       console.log("🔄 UPDATE DATA - File URLs being saved to database:");
@@ -1204,7 +1204,7 @@ router.put(
           notifyPublishIfNeeded(refetchedEvent);
           
           // Push to UniversityGated if outsiders were enabled/changed (non-blocking)
-          if (isGatedEnabled()) {
+          if (isGatedEnabled() && !asBoolean(refetchedEvent?.is_draft)) {
             shouldPushEventToGated(refetchedEvent, queryOne).then(async (shouldPush) => {
               if (shouldPush) {
                 try {
@@ -1240,7 +1240,7 @@ router.put(
       notifyPublishIfNeeded(updatedEvent);
 
       // Push to UniversityGated if outsiders were enabled/changed (non-blocking)
-      if (isGatedEnabled()) {
+      if (isGatedEnabled() && !asBoolean(updatedEvent?.is_draft)) {
         shouldPushEventToGated(updatedEvent, queryOne).then(async (shouldPush) => {
           if (shouldPush) {
             try {

@@ -734,6 +734,7 @@ interface CreateFestProps {
   existingImageFileUrl?: string | null;
   existingBannerFileUrl?: string | null;
   existingPdfFileUrl?: string | null;
+  isDraft?: boolean;
   venue?: string;
   status?: "draft" | "upcoming" | "ongoing" | "completed" | "cancelled" | "past";
   registration_deadline?: string;
@@ -803,6 +804,7 @@ function CreateFestForm(props?: CreateFestProps) {
   const faqs = props?.faqs || [];
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isDraftFest, setIsDraftFest] = useState(Boolean(props?.isDraft));
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [formData, setFormData] = useState<CreateFestState>({
     title,
@@ -837,6 +839,7 @@ function CreateFestForm(props?: CreateFestProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingFestData, setIsLoadingFestData] = useState(false);
   const [pendingFestSuccess, setPendingFestSuccess] = useState(false);
+  const [wasDraftOnSubmit, setWasDraftOnSubmit] = useState(false);
   const [festModalVisible, setFestModalVisible] = useState(false);
 
   const { session } = useAuth();
@@ -851,6 +854,12 @@ function CreateFestForm(props?: CreateFestProps) {
   const router = useRouter();
   const isEditModeFromPath = pathname.startsWith("/edit/fest");
   const festIdFromPath = isEditModeFromPath ? pathname.split("/").pop() : null;
+
+  useEffect(() => {
+    if (typeof props?.isDraft === "boolean") {
+      setIsDraftFest(props.isDraft);
+    }
+  }, [props?.isDraft]);
 
   useEffect(() => {
     if (isEditModeFromPath && festIdFromPath && session?.access_token) {
@@ -921,6 +930,12 @@ function CreateFestForm(props?: CreateFestProps) {
               allowOutsiders: data.fest.allow_outsiders === true || data.fest.allow_outsiders === 'true' || false,
               customFields: parsedCustomFields,
             });
+            setIsDraftFest(
+              data.fest.is_draft === true ||
+                data.fest.is_draft === 1 ||
+                data.fest.is_draft === "1" ||
+                data.fest.is_draft === "true"
+            );
           } else {
             throw new Error("Fest data not found in response.");
           }
@@ -1390,6 +1405,7 @@ function CreateFestForm(props?: CreateFestProps) {
     }
 
     setIsSubmitting(true);
+    setWasDraftOnSubmit(Boolean(finalIsEditMode && isDraftFest));
     let uploadedFestImageUrl: string | null = null;
 
     if (imageFile) {
@@ -1468,6 +1484,7 @@ function CreateFestForm(props?: CreateFestProps) {
       // - If in edit mode with no new file, keep the existing URL
       // - Otherwise null (new fest with no image - already caught above)
       const finalImageUrl = uploadedFestImageUrl ?? (isEditMode ? existingImageFileUrl : null);
+      const isPublishingDraft = finalIsEditMode && isDraftFest;
 
       console.log(`[Fest Submit] isEditMode=${isEditMode}, uploadedFestImageUrl=${uploadedFestImageUrl}, existingImageFileUrl=${existingImageFileUrl}, finalImageUrl=${finalImageUrl}`);
 
@@ -1505,6 +1522,8 @@ function CreateFestForm(props?: CreateFestProps) {
         custom_fields: customFieldsWithTeamSettings,
         // Always include festImageUrl so backend always updates the DB column
         festImageUrl: finalImageUrl,
+        is_draft: false,
+        ...(isPublishingDraft ? { send_notifications: true } : {}),
       };
 
       let response;
@@ -1541,15 +1560,24 @@ function CreateFestForm(props?: CreateFestProps) {
 
       // Handle response - check if fest_id changed
       const responseData = await response.json();
+      if (responseData?.fest) {
+        setIsDraftFest(
+          responseData.fest.is_draft === true ||
+            responseData.fest.is_draft === 1 ||
+            responseData.fest.is_draft === "1" ||
+            responseData.fest.is_draft === "true"
+        );
+      }
       
       // If the fest_id changed (title was updated), show success message and redirect to new URL
       if (isEditMode && responseData.id_changed && responseData.fest_id) {
         const oldId = festIdFromPath;
         const newId = responseData.fest_id;
         console.log(`Fest ID changed from '${oldId}' to '${newId}', redirecting...`);
+        const successLabel = isPublishingDraft ? "published" : "updated";
         
         toast.success(
-          `Fest updated successfully! The fest link has changed from /fest/${oldId} to /fest/${newId}`,
+          `Fest ${successLabel} successfully! The fest link has changed from /fest/${oldId} to /fest/${newId}`,
           { duration: 5000 }
         );
 
@@ -1557,7 +1585,10 @@ function CreateFestForm(props?: CreateFestProps) {
         return;
       } else if (isEditMode) {
         // Show regular success message for edit
-        toast.success("Fest updated successfully!", { duration: 3000 });
+        toast.success(
+          isPublishingDraft ? "Fest published successfully!" : "Fest updated successfully!",
+          { duration: 3000 }
+        );
       }
 
       // Defer modal until overlay animation finishes
@@ -1780,14 +1811,14 @@ function CreateFestForm(props?: CreateFestProps) {
                 id="modal-title"
                 className="text-2xl sm:text-3xl font-semibold text-[#063168] mb-3"
               >
-                Fest {finalIsEditMode ? "Updated" : "Published"}!
+                Fest {finalIsEditMode ? (wasDraftOnSubmit ? "Published" : "Updated") : "Published"}!
               </h2>
               <p
                 id="modal-description"
                 className="text-gray-500 mb-8 text-sm sm:text-base px-4"
               >
                 Your fest has been successfully{" "}
-                {finalIsEditMode ? "updated" : "published"}.<br />
+                {finalIsEditMode ? (wasDraftOnSubmit ? "published" : "updated") : "published"}.<br />
                 What would you like to do next?
               </p>
             </div>
@@ -2857,10 +2888,14 @@ function CreateFestForm(props?: CreateFestProps) {
                         ? "Uploading image..."
                         : isSubmitting
                         ? finalIsEditMode
-                          ? "Updating..."
+                          ? isDraftFest
+                            ? "Publishing..."
+                            : "Updating..."
                           : "Publishing..."
                         : finalIsEditMode
-                        ? "Update Fest"
+                        ? isDraftFest
+                          ? "Publish Fest"
+                          : "Update Fest"
                         : "Publish Fest"}
                     </span>
                   </button>

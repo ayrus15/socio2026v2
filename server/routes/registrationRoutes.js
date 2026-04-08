@@ -212,6 +212,14 @@ router.post("/register", async (req, res) => {
         code: "EVENT_ARCHIVED"
       });
     }
+
+    if (event.is_draft === true || event.is_draft === 1 || event.is_draft === "1" || event.is_draft === "true") {
+      return res.status(403).json({
+        error: "Event is in draft mode",
+        details: "This event is not published yet and is not accepting registrations.",
+        code: "EVENT_DRAFT",
+      });
+    }
     
     // ===== REGISTRATION TIME VALIDATIONS =====
     const currentDate = new Date();
@@ -699,6 +707,14 @@ router.post(
           error: "Event is archived",
           details: "This event has been archived and is no longer accepting registrations.",
           code: "EVENT_ARCHIVED",
+        });
+      }
+
+      if (event.is_draft === true || event.is_draft === 1 || event.is_draft === "1" || event.is_draft === "true") {
+        return res.status(403).json({
+          error: "Event is in draft mode",
+          details: "This event is not published yet and is not accepting registrations.",
+          code: "EVENT_DRAFT",
         });
       }
 
