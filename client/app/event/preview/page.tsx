@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   EventPreviewData,
   getEventPreviewDraft,
@@ -142,7 +142,7 @@ const getPreviewErrorMessage = (draftKey: string | null): string => {
   return "Preview draft was not found or has expired. Re-open preview from the form.";
 };
 
-export default function EventPreviewPage() {
+function EventPreviewContent() {
   const searchParams = useSearchParams();
   const draftKey = searchParams.get("draft");
 
@@ -186,24 +186,7 @@ export default function EventPreviewPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[70vh]">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={2}
-          stroke="currentColor"
-          className="size-8 animate-spin text-[#063168]"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"
-          />
-        </svg>
-      </div>
-    );
+    return <EventPreviewLoadingFallback />;
   }
 
   if (!eventData || error) {
@@ -550,5 +533,34 @@ export default function EventPreviewPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function EventPreviewLoadingFallback() {
+  return (
+    <div className="flex justify-center items-center min-h-[70vh]">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        strokeWidth={2}
+        stroke="currentColor"
+        className="size-8 animate-spin text-[#063168]"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"
+        />
+      </svg>
+    </div>
+  );
+}
+
+export default function EventPreviewPage() {
+  return (
+    <Suspense fallback={<EventPreviewLoadingFallback />}>
+      <EventPreviewContent />
+    </Suspense>
   );
 }
