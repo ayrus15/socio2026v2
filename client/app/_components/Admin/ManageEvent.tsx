@@ -1643,7 +1643,7 @@ export default function EventForm({
                                 if (!/^\d+$/.test(minRaw)) return "Enter a number";
                                 const minValue = Number(minRaw);
                                 if (minValue < 2) return "Min 2 for teams";
-                                const maxRaw = String(watch("maxParticipants") || "").trim();
+                                const maxRaw = String(watchedMaxParticipants || "").trim();
                                 if (maxRaw && /^\d+$/.test(maxRaw) && minValue > Number(maxRaw)) {
                                   return "Min ≤ Max";
                                 }
@@ -1685,7 +1685,7 @@ export default function EventForm({
                                 if (!/^\d+$/.test(maxRaw)) return "Enter a number";
                                 const maxValue = Number(maxRaw);
                                 if (maxValue < 2) return "Max 2 for teams";
-                                const minRaw = String(watch("minParticipants") || "").trim();
+                                const minRaw = String(watchedMinParticipants || "").trim();
                                 if (minRaw && /^\d+$/.test(minRaw) && maxValue < Number(minRaw)) {
                                   return "Max ≥ Min";
                                 }

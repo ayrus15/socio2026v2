@@ -639,6 +639,8 @@ const Page = () => {
           <p className="text-xs sm:text-sm text-gray-300 mt-2">
             {isIndividualEvent
               ? "Individual Event"
+              : minTeammates === maxTeammates
+              ? `Team Event (${maxTeammates} members)`
               : `Team Event (${minTeammates}-${maxTeammates} members)`}
           </p>
         </div>

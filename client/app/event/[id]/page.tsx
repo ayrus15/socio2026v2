@@ -911,6 +911,8 @@ export default function Page() {
                     <p className="text-gray-800 font-medium">
                       {eventData.numTeammates <= 1
                         ? "Individual Event"
+                        : eventData.minTeammates === eventData.numTeammates
+                        ? `Team Event (${eventData.numTeammates} members)`
                         : `Team Event (${eventData.minTeammates}-${eventData.numTeammates} members)`}
                     </p>
                   </div>
