@@ -5,6 +5,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext"; // Adjust path as needed
 import { departments as baseDepartments, christCampuses } from "../lib/eventFormSchema";
+import {
+  buildFestPreviewData,
+  saveFestPreviewDraft,
+} from "../lib/festPreviewDraft";
 import toast from "react-hot-toast";
 import PublishingOverlay from "./UI/PublishingOverlay";
 const API_URL = process.env.NEXT_PUBLIC_API_URL!.replace(/\/api\/?$/, "");
@@ -838,11 +842,14 @@ function CreateFestForm(props?: CreateFestProps) {
   const [isNavigating, setIsNavigating] = useState(false); // Used for delete operation
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitIntent, setSubmitIntent] = useState<"publish" | "draft">("publish");
+  const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
+  const actionsDropdownRef = useRef<HTMLDivElement>(null);
   const [isLoadingFestData, setIsLoadingFestData] = useState(false);
   const [pendingFestSuccess, setPendingFestSuccess] = useState(false);
   const [wasDraftOnSubmit, setWasDraftOnSubmit] = useState(false);
   const [successAction, setSuccessAction] = useState<"publish" | "draft">("publish");
   const [festModalVisible, setFestModalVisible] = useState(false);
+  const [isOpeningPreview, setIsOpeningPreview] = useState(false);
 
   const { session } = useAuth();
   const currentDateRef = useRef(new Date());
@@ -964,6 +971,19 @@ function CreateFestForm(props?: CreateFestProps) {
       prev.status === derivedStatus ? prev : { ...prev, status: derivedStatus }
     );
   }, [formData.openingDate, formData.closingDate]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        actionsDropdownRef.current &&
+        !actionsDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsActionsDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const deleteFest = async () => {
     if (
@@ -1221,177 +1241,196 @@ function CreateFestForm(props?: CreateFestProps) {
     ] // Use prop isEditMode here
   );
 
+  const getValidationErrors = useCallback(
+    (options?: { validateImage?: boolean }) => {
+      const shouldValidateImage = options?.validateImage ?? true;
+      const currentValidationErrors: Record<string, string | undefined> = {};
+      const fieldsToValidate: (keyof CreateFestState)[] = [
+        "title",
+        "openingDate",
+        "closingDate",
+        "minParticipants",
+        "maxParticipants",
+        "detailedDescription",
+        "department",
+        "category",
+        "contactEmail",
+        "contactPhone",
+        "organizingDept",
+        "campusHostedAt",
+        "allowedCampuses",
+      ];
+
+      const validateSync = (name: string, value: any) => {
+        const currentDate = new Date(currentDateRef.current);
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const phoneRegex = /^\+?[\d\s-]{10,14}$/;
+        let errorMsg: string | undefined = undefined;
+
+        switch (name) {
+          case "title":
+            if (!String(value).trim()) errorMsg = "Fest title is required";
+            else if (String(value).length > 100) errorMsg = "Max 100 characters";
+            break;
+          case "openingDate":
+          case "closingDate": {
+            const dateType = name === "openingDate" ? "Opening" : "Closing";
+            if (!String(value).trim()) errorMsg = `${dateType} date is required`;
+            else if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+              errorMsg = "Format YYYY-MM-DD";
+            } else {
+              const inputDate = parseYYYYMMDD(String(value));
+              if (!inputDate) errorMsg = "Invalid date value";
+              else if (
+                inputDate < currentDate &&
+                !isEditMode &&
+                name === "openingDate"
+              ) {
+                errorMsg = `${dateType} must be on or after today`;
+              } else if (
+                name === "closingDate" &&
+                formData.openingDate &&
+                parseYYYYMMDD(formData.openingDate)
+              ) {
+                if (inputDate < parseYYYYMMDD(formData.openingDate)!) {
+                  errorMsg = "Must be on/after opening date";
+                }
+              }
+            }
+
+            if (
+              name === "openingDate" &&
+              formData.closingDate &&
+              parseYYYYMMDD(String(value)) &&
+              parseYYYYMMDD(formData.closingDate) &&
+              parseYYYYMMDD(String(value))! > parseYYYYMMDD(formData.closingDate)!
+            ) {
+              if (!currentValidationErrors.closingDate) {
+                currentValidationErrors.closingDate =
+                  "Closing date must be on/after opening date";
+              }
+            }
+            break;
+          }
+          case "minParticipants": {
+            if (!formData.isTeamEvent) break;
+            const minRaw = String(value || "").trim();
+            if (!minRaw) {
+              errorMsg = "Min is required";
+              break;
+            }
+            if (!/^\d+$/.test(minRaw)) {
+              errorMsg = "Enter a number";
+              break;
+            }
+            const minValue = Number(minRaw);
+            if (minValue < 2) {
+              errorMsg = "Min 2 for teams";
+              break;
+            }
+            const maxRaw = String(formData.maxParticipants || "").trim();
+            if (maxRaw && /^\d+$/.test(maxRaw) && minValue > Number(maxRaw)) {
+              errorMsg = "Min ≤ Max";
+            }
+            break;
+          }
+          case "maxParticipants": {
+            if (!formData.isTeamEvent) break;
+            const maxRaw = String(value || "").trim();
+            if (!maxRaw) {
+              errorMsg = "Max is required";
+              break;
+            }
+            if (!/^\d+$/.test(maxRaw)) {
+              errorMsg = "Enter a number";
+              break;
+            }
+            const maxValue = Number(maxRaw);
+            if (maxValue < 2) {
+              errorMsg = "Max 2 for teams";
+              break;
+            }
+            const minRaw = String(formData.minParticipants || "").trim();
+            if (minRaw && /^\d+$/.test(minRaw) && maxValue < Number(minRaw)) {
+              errorMsg = "Max ≥ Min";
+            }
+            break;
+          }
+          case "detailedDescription":
+            if (!String(value).trim()) errorMsg = "Description is required";
+            else if (String(value).length > 1000) errorMsg = "Max 1000 characters";
+            break;
+          case "department":
+            if (!Array.isArray(value) || value.length === 0) {
+              errorMsg = "Select at least one department";
+            }
+            break;
+          case "category":
+            if (!String(value).trim()) errorMsg = "Category is required";
+            break;
+          case "contactEmail":
+            if (!String(value).trim()) errorMsg = "Contact email is required";
+            else if (!emailRegex.test(String(value))) errorMsg = "Invalid email format";
+            break;
+          case "contactPhone":
+            if (!String(value).trim()) errorMsg = "Contact phone is required";
+            else if (!phoneRegex.test(String(value))) errorMsg = "Must be 10-14 digits";
+            break;
+          case "organizingDept":
+            if (!String(value).trim()) errorMsg = "Organizing department is required";
+            else if (String(value).length > 100) errorMsg = "Max 100 characters";
+            break;
+          case "campusHostedAt":
+            if (!String(value).trim()) errorMsg = "Hosted campus is required";
+            break;
+          case "allowedCampuses":
+            if (!Array.isArray(value) || value.length === 0) {
+              errorMsg = "Select at least one campus";
+            }
+            break;
+        }
+
+        if (errorMsg) currentValidationErrors[name] = errorMsg;
+      };
+
+      fieldsToValidate.forEach((field) => validateSync(field, formData[field]));
+
+      formData.eventHeads.forEach((head, index) => {
+        if (head.email.trim() !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(head.email)) {
+          currentValidationErrors[`eventHead_${index}`] = "Invalid email format.";
+        } else if (head.email.length > 100) {
+          currentValidationErrors[`eventHead_${index}`] = "Max 100 chars.";
+        }
+
+        if (head.email.trim() !== "" && !head.expiresAt) {
+          currentValidationErrors[`eventHeadExpiry_${index}`] =
+            "Expiry date and time is required.";
+        }
+      });
+
+      if (shouldValidateImage) {
+        if (!imageFile && !isEditMode && !existingImageFileUrl) {
+          currentValidationErrors.imageFile = "Fest image is required";
+        } else if (imageFile) {
+          if (imageFile.size > 3 * 1024 * 1024) {
+            currentValidationErrors.imageFile = "Image file must be less than 3MB";
+          } else if (!ALLOWED_FEST_IMAGE_TYPES.includes(imageFile.type)) {
+            currentValidationErrors.imageFile =
+              "Invalid file type. JPG/PNG/WEBP/GIF only.";
+          }
+        }
+      }
+
+      return currentValidationErrors;
+    },
+    [formData, imageFile, isEditMode, existingImageFileUrl]
+  );
+
   const submitFest = async (saveAsDraft: boolean) => {
     setErrors((prev) => ({ ...prev, submit: undefined }));
     setSubmitIntent(saveAsDraft ? "draft" : "publish");
 
-    const currentValidationErrors: Record<string, string | undefined> = {};
-    const fieldsToValidate: (keyof CreateFestState)[] = [
-      "title",
-      "openingDate",
-      "closingDate",
-      "minParticipants",
-      "maxParticipants",
-      "detailedDescription",
-      "department",
-      "category",
-      "contactEmail",
-      "contactPhone",
-      "organizingDept",
-      "campusHostedAt",
-      "allowedCampuses",
-    ];
-
-    const validateSync = (name: string, value: any) => {
-      const currentDate = new Date(currentDateRef.current);
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      const phoneRegex = /^\+?[\d\s-]{10,14}$/;
-      let errorMsg: string | undefined = undefined;
-      switch (name) {
-        case "title":
-          if (!String(value).trim()) errorMsg = "Fest title is required";
-          else if (String(value).length > 100) errorMsg = "Max 100 characters";
-          break;
-        case "openingDate":
-        case "closingDate":
-          const dateType = name === "openingDate" ? "Opening" : "Closing";
-          if (!String(value).trim()) errorMsg = `${dateType} date is required`;
-          else if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value)))
-            errorMsg = "Format YYYY-MM-DD";
-          else {
-            const inputDate = parseYYYYMMDD(String(value));
-            if (!inputDate) errorMsg = "Invalid date value";
-            else if (
-              inputDate < currentDate &&
-              !isEditMode &&
-              name === "openingDate"
-            )
-              errorMsg = `${dateType} must be on or after today`;
-            else if (
-              name === "closingDate" &&
-              formData.openingDate &&
-              parseYYYYMMDD(formData.openingDate)
-            ) {
-              if (inputDate < parseYYYYMMDD(formData.openingDate)!)
-                errorMsg = "Must be on/after opening date";
-            }
-          }
-          if (
-            name === "openingDate" &&
-            formData.closingDate &&
-            parseYYYYMMDD(String(value)) &&
-            parseYYYYMMDD(formData.closingDate) &&
-            parseYYYYMMDD(String(value))! > parseYYYYMMDD(formData.closingDate)!
-          ) {
-            if (!currentValidationErrors.closingDate)
-              currentValidationErrors.closingDate =
-                "Closing date must be on/after opening date";
-          }
-          break;
-        case "minParticipants": {
-          if (!formData.isTeamEvent) break;
-          const minRaw = String(value || "").trim();
-          if (!minRaw) {
-            errorMsg = "Min is required";
-            break;
-          }
-          if (!/^\d+$/.test(minRaw)) {
-            errorMsg = "Enter a number";
-            break;
-          }
-          const minValue = Number(minRaw);
-          if (minValue < 2) {
-            errorMsg = "Min 2 for teams";
-            break;
-          }
-          const maxRaw = String(formData.maxParticipants || "").trim();
-          if (maxRaw && /^\d+$/.test(maxRaw) && minValue > Number(maxRaw)) {
-            errorMsg = "Min ≤ Max";
-          }
-          break;
-        }
-        case "maxParticipants": {
-          if (!formData.isTeamEvent) break;
-          const maxRaw = String(value || "").trim();
-          if (!maxRaw) {
-            errorMsg = "Max is required";
-            break;
-          }
-          if (!/^\d+$/.test(maxRaw)) {
-            errorMsg = "Enter a number";
-            break;
-          }
-          const maxValue = Number(maxRaw);
-          if (maxValue < 2) {
-            errorMsg = "Max 2 for teams";
-            break;
-          }
-          const minRaw = String(formData.minParticipants || "").trim();
-          if (minRaw && /^\d+$/.test(minRaw) && maxValue < Number(minRaw)) {
-            errorMsg = "Max ≥ Min";
-          }
-          break;
-        }
-        case "detailedDescription":
-          if (!String(value).trim()) errorMsg = "Description is required";
-          else if (String(value).length > 1000)
-            errorMsg = "Max 1000 characters";
-          break;
-        case "department":
-          if (!Array.isArray(value) || value.length === 0)
-            errorMsg = "Select at least one department";
-          break;
-        case "category":
-          if (!String(value).trim()) errorMsg = "Category is required";
-          break;
-        case "contactEmail":
-          if (!String(value).trim()) errorMsg = "Contact email is required";
-          else if (!emailRegex.test(String(value)))
-            errorMsg = "Invalid email format";
-          break;
-        case "contactPhone":
-          if (!String(value).trim()) errorMsg = "Contact phone is required";
-          else if (!phoneRegex.test(String(value)))
-            errorMsg = "Must be 10-14 digits";
-          break;
-        case "organizingDept":
-          if (!String(value).trim())
-            errorMsg = "Organizing department is required";
-          else if (String(value).length > 100) errorMsg = "Max 100 characters";
-          break;
-        case "campusHostedAt":
-          if (!String(value).trim()) errorMsg = "Hosted campus is required";
-          break;
-        case "allowedCampuses":
-          if (!Array.isArray(value) || value.length === 0)
-            errorMsg = "Select at least one campus";
-          break;
-      }
-      if (errorMsg) currentValidationErrors[name] = errorMsg;
-    };
-
-    fieldsToValidate.forEach((field) => validateSync(field, formData[field]));
-    formData.eventHeads.forEach((head, index) => {
-      if (head.email.trim() !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(head.email)) {
-        currentValidationErrors[`eventHead_${index}`] = "Invalid email format.";
-      } else if (head.email.length > 100) {
-        currentValidationErrors[`eventHead_${index}`] = "Max 100 chars.";
-      }
-
-      if (head.email.trim() !== "" && !head.expiresAt) {
-        currentValidationErrors[`eventHeadExpiry_${index}`] =
-          "Expiry date and time is required.";
-      }
-    });
-
-    if (!imageFile && !isEditMode && !existingImageFileUrl) {
-      currentValidationErrors.imageFile = "Fest image is required";
-    } else if (imageFile) {
-      if (imageFile.size > 3 * 1024 * 1024)
-        currentValidationErrors.imageFile = "Image file must be less than 3MB";
-      else if (!ALLOWED_FEST_IMAGE_TYPES.includes(imageFile.type))
-        currentValidationErrors.imageFile = "Invalid file type. JPG/PNG/WEBP/GIF only.";
-    }
+    const currentValidationErrors = getValidationErrors({ validateImage: true });
 
     if (
       Object.keys(currentValidationErrors).some(
@@ -1615,6 +1654,74 @@ function CreateFestForm(props?: CreateFestProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await submitFest(false);
+  };
+
+  const handlePreview = async () => {
+    if (isSubmitting || isNavigating || isUploadingImage || isOpeningPreview) {
+      return;
+    }
+
+    setErrors((prev) => ({ ...prev, submit: undefined }));
+    setIsOpeningPreview(true);
+
+    try {
+      const currentValidationErrors = getValidationErrors({ validateImage: true });
+      if (
+        Object.keys(currentValidationErrors).some(
+          (key) => currentValidationErrors[key] !== undefined
+        )
+      ) {
+        setErrors({
+          ...currentValidationErrors,
+          submit: "Please correct the errors in the form.",
+        });
+        return;
+      }
+
+      const previewData = buildFestPreviewData({
+        formData: {
+          title: formData.title,
+          openingDate: formData.openingDate,
+          closingDate: formData.closingDate,
+          detailedDescription: formData.detailedDescription,
+          organizingDept: formData.organizingDept,
+          category: formData.category,
+          contactEmail: formData.contactEmail,
+          contactPhone: formData.contactPhone,
+          eventHeads: formData.eventHeads,
+          venue: formData.venue,
+          timeline: formData.timeline,
+          sponsors: formData.sponsors,
+          social_links: formData.social_links,
+          faqs: formData.faqs,
+          isTeamEvent: formData.isTeamEvent,
+          minParticipants: formData.minParticipants,
+          maxParticipants: formData.maxParticipants,
+          campusHostedAt: formData.campusHostedAt,
+          allowedCampuses: formData.allowedCampuses,
+          allowOutsiders: formData.allowOutsiders,
+          imageFile,
+        },
+        sourcePath: pathname || "/create/fest",
+        existingImageFileUrl,
+      });
+
+      const previewDraftKey = saveFestPreviewDraft(previewData);
+      const previewUrl = `/fest/preview?draft=${encodeURIComponent(previewDraftKey)}`;
+      const previewTab = window.open("", "_blank");
+
+      if (!previewTab) {
+        window.alert("Preview was blocked. Please allow pop-ups and try again.");
+        return;
+      }
+
+      previewTab.opener = null;
+      previewTab.location.href = previewUrl;
+    } catch (previewError) {
+      console.error("CreateFestForm: Failed to open preview", previewError);
+    } finally {
+      setIsOpeningPreview(false);
+    }
   };
 
   const handleSaveDraft = async () => {
@@ -2853,51 +2960,66 @@ function CreateFestForm(props?: CreateFestProps) {
                   >
                     Cancel
                   </Link>
-                  {finalIsEditMode && (
+                  
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                     <button
                       type="button"
-                      onClick={deleteFest}
-                      disabled={isNavigating || isSubmitting}
-                      className="w-full sm:w-auto px-4 py-2.5 border border-red-300 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+                      onClick={handleSaveDraft}
+                      disabled={isSubmitting || isNavigating || isOpeningPreview}
+                      className="w-full sm:w-auto px-5 py-2.5 border border-amber-400 text-amber-800 bg-amber-50 text-sm font-medium rounded-md hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
                     >
-                      {isNavigating && (
-                        <svg
-                          className="animate-spin h-4 w-4 text-white"
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          ></circle>
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          ></path>
-                        </svg>
-                      )}
-                      <span>{isNavigating ? "Deleting..." : "Delete"}</span>
+                      {isSubmitting && submitIntent === "draft"
+                        ? "Saving Draft..."
+                        : "Save as Draft"}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleSaveDraft}
-                    disabled={isSubmitting || isNavigating}
-                    className="w-full sm:w-auto px-5 py-2.5 border border-amber-400 text-amber-800 bg-amber-50 text-sm font-medium rounded-md hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    {isSubmitting && submitIntent === "draft"
-                      ? "Saving Draft..."
-                      : "Save as Draft"}
-                  </button>
+
+                    <button
+                      type="button"
+                      onClick={handlePreview}
+                      disabled={isSubmitting || isNavigating || isOpeningPreview}
+                      className="w-full sm:w-auto px-5 py-2.5 border border-[#154CB3] text-[#154CB3] bg-white text-sm font-medium rounded-md hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-[#154CB3] focus:ring-offset-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {isOpeningPreview ? "Opening preview..." : "Preview"}
+                    </button>
+                    
+                    {finalIsEditMode && (
+                      <div className="relative" ref={actionsDropdownRef}>
+                        <button
+                          type="button"
+                          onClick={() => setIsActionsDropdownOpen(!isActionsDropdownOpen)}
+                          disabled={isNavigating || isSubmitting || isOpeningPreview}
+                          className="w-full sm:w-auto px-4 py-2.5 border border-gray-300 text-gray-700 bg-white text-sm font-medium rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+                        >
+                          <span>More actions</span>
+                          <svg className={`w-4 h-4 transition-transform ${isActionsDropdownOpen ? 'rotate-180' : ''}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                          </svg>
+                        </button>
+                        {isActionsDropdownOpen && (
+                          <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                deleteFest();
+                                setIsActionsDropdownOpen(false);
+                              }}
+                              disabled={isNavigating || isSubmitting || isOpeningPreview}
+                              className="w-full text-left px-4 py-3 text-red-600 hover:bg-red-50 text-sm font-medium border-b border-gray-100 first:rounded-t-lg last:border-b-0 last:rounded-b-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                              <svg className="w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                              {isNavigating ? "Deleting..." : "Delete Fest"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  
                   <button
                     type="submit"
-                    disabled={isSubmitting || isNavigating}
+                    disabled={isSubmitting || isNavigating || isOpeningPreview}
                     className="w-full sm:w-auto px-6 py-2.5 bg-[#154CB3] text-white text-sm font-medium rounded-md hover:bg-[#0f3a7a] focus:outline-none focus:ring-2 focus:ring-[#154CB3] focus:ring-offset-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
                   >
                     {(isSubmitting || isUploadingImage) && (
