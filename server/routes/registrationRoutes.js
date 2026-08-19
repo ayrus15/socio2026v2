@@ -928,6 +928,27 @@ router.post(
       const registrationType = String(req.body?.registration_type || req.body?.registrationType || "individual").toLowerCase();
       const isTeamRegistration = registrationType === "team" || Boolean(req.body?.team_name || req.body?.teamName);
 
+      const eventConfiguredRegType = String(event.registration_type || "both").toLowerCase();
+      const maxTeamSize = Number(event.participants_per_team || event.max_team_size || (eventConfiguredRegType === "team" ? 10 : 1));
+      const minTeamSize = Number(event.min_participants || (eventConfiguredRegType === "team" ? 2 : 1));
+
+      const isIndividualOnlyEvent = eventConfiguredRegType === "individual" || (maxTeamSize <= 1 && minTeamSize <= 1);
+      const isTeamOnlyEvent = eventConfiguredRegType === "team" || minTeamSize > 1;
+
+      if (isTeamRegistration && isIndividualOnlyEvent) {
+        return res.status(400).json({
+          error: "This event only allows individual registrations.",
+          code: "INDIVIDUAL_ONLY_EVENT",
+        });
+      }
+
+      if (!isTeamRegistration && isTeamOnlyEvent) {
+        return res.status(400).json({
+          error: "This event requires team registration.",
+          code: "TEAM_ONLY_EVENT",
+        });
+      }
+
       const existingRegistrations = await queryAll("registrations", {
         where: { event_id: eventId },
       });
