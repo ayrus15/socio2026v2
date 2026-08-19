@@ -885,7 +885,7 @@ router.post("/register", async (req, res) => {
   }
 });
 
-// Organiser-owned on-spot registration
+// Organiser-owned on-spot registration (Individual or Team)
 router.post(
   "/events/:eventId/on-spot-register",
   authenticateUser,
@@ -925,47 +925,28 @@ router.post(
         });
       }
 
-      const attendeeName = String(req.body?.name || "").trim();
-      const registerNumberRaw = String(req.body?.register_number || req.body?.registerNumber || "").trim();
-      const visitorIdRaw = String(req.body?.visitor_id || req.body?.visitorId || "").trim();
-      const attendeeEmail = String(req.body?.email || "").trim() || null;
-
-      if (!attendeeName) {
-        return res.status(400).json({ error: "Name is required" });
-      }
-
-      const registerIdentifier = registerNumberRaw || visitorIdRaw;
-      if (!registerIdentifier) {
-        return res.status(400).json({
-          error: "Register number or visitor ID is required",
-          code: "REGISTER_ID_REQUIRED",
-        });
-      }
-
-      const normalizedIdentifier = normalizeRegisterIdentifier(registerIdentifier);
-      const participantOrganization = normalizedIdentifier.startsWith("VIS") ? "outsider" : "christ_member";
-
-      if (participantOrganization === "outsider") {
-        const allowsOutsiders = asBoolean(event.allow_outsiders);
-        if (!allowsOutsiders) {
-          return res.status(403).json({
-            error: "This event does not allow outsider registrations",
-            details: "Only Christ University members can register for this event",
-          });
-        }
-      }
+      const registrationType = String(req.body?.registration_type || req.body?.registrationType || "individual").toLowerCase();
+      const isTeamRegistration = registrationType === "team" || Boolean(req.body?.team_name || req.body?.teamName);
 
       const existingRegistrations = await queryAll("registrations", {
         where: { event_id: eventId },
       });
 
       const existingRegisterNumbers = new Set();
+      const existingEmails = new Set();
+
       existingRegistrations.forEach((registration) => {
         if (registration?.individual_register_number) {
           existingRegisterNumbers.add(normalizeRegisterIdentifier(registration.individual_register_number));
         }
         if (registration?.team_leader_register_number) {
           existingRegisterNumbers.add(normalizeRegisterIdentifier(registration.team_leader_register_number));
+        }
+        if (registration?.individual_email) {
+          existingEmails.add(String(registration.individual_email).toLowerCase().trim());
+        }
+        if (registration?.team_leader_email) {
+          existingEmails.add(String(registration.team_leader_email).toLowerCase().trim());
         }
 
         if (registration?.teammates) {
@@ -974,8 +955,11 @@ router.post(
               ? registration.teammates
               : JSON.parse(registration.teammates || "[]");
             teammatesList.forEach((teammate) => {
-              if (teammate?.registerNumber) {
-                existingRegisterNumbers.add(normalizeRegisterIdentifier(teammate.registerNumber));
+              if (teammate?.registerNumber || teammate?.register_number) {
+                existingRegisterNumbers.add(normalizeRegisterIdentifier(teammate.registerNumber || teammate.register_number));
+              }
+              if (teammate?.email) {
+                existingEmails.add(String(teammate.email).toLowerCase().trim());
               }
             });
           } catch (_error) {
@@ -984,81 +968,252 @@ router.post(
         }
       });
 
-      if (existingRegisterNumbers.has(normalizedIdentifier)) {
-        return res.status(409).json({
-          error: "Participant is already registered for this event",
-          code: "ALREADY_REGISTERED",
+      if (isTeamRegistration) {
+        // --- TEAM ON-SPOT REGISTRATION ---
+        const rawTeamName = String(req.body?.team_name || req.body?.teamName || "").trim();
+        if (!rawTeamName) {
+          return res.status(400).json({ error: "Team name is required for team registration", code: "TEAM_NAME_REQUIRED" });
+        }
+
+        const teamLeaderPayload = req.body?.team_leader || req.body?.teamLeader || req.body;
+        const leaderName = String(teamLeaderPayload?.name || teamLeaderPayload?.leader_name || teamLeaderPayload?.leaderName || "").trim();
+        const leaderRegRaw = String(teamLeaderPayload?.register_number || teamLeaderPayload?.registerNumber || teamLeaderPayload?.visitor_id || teamLeaderPayload?.visitorId || "").trim();
+        const leaderEmail = String(teamLeaderPayload?.email || teamLeaderPayload?.leader_email || teamLeaderPayload?.leaderEmail || "").trim() || null;
+
+        if (!leaderName) {
+          return res.status(400).json({ error: "Team leader name is required", code: "LEADER_NAME_REQUIRED" });
+        }
+        if (!leaderRegRaw) {
+          return res.status(400).json({ error: "Team leader register number or visitor ID is required", code: "LEADER_REG_REQUIRED" });
+        }
+
+        const rawTeammates = Array.isArray(req.body?.teammates) ? req.body.teammates : [];
+        const normalizedTeammates = rawTeammates.map((tm) => ({
+          name: String(tm?.name || "").trim(),
+          registerNumber: normalizeRegisterIdentifier(tm?.register_number || tm?.registerNumber || tm?.visitor_id || tm?.visitorId || ""),
+          email: String(tm?.email || "").trim() || null,
+        })).filter(tm => tm.name && tm.registerNumber);
+
+        const normalizedLeaderReg = normalizeRegisterIdentifier(leaderRegRaw);
+        const incomingMembers = [
+          { name: leaderName, registerNumber: normalizedLeaderReg, email: leaderEmail, isLeader: true },
+          ...normalizedTeammates.map(tm => ({ ...tm, isLeader: false }))
+        ];
+
+        const totalIncomingCount = incomingMembers.length;
+
+        // Team Size Validation
+        const minPerTeam = event.min_participants || 2;
+        const maxPerTeam = event.participants_per_team || 10;
+        if (totalIncomingCount < minPerTeam) {
+          return res.status(400).json({
+            error: "Team size too small",
+            details: `This event requires a minimum of ${minPerTeam} participants per team. You provided ${totalIncomingCount}.`,
+            code: "TEAM_TOO_SMALL",
+          });
+        }
+        if (totalIncomingCount > maxPerTeam) {
+          return res.status(400).json({
+            error: "Team size too large",
+            details: `This event allows a maximum of ${maxPerTeam} participants per team. You provided ${totalIncomingCount}.`,
+            code: "TEAM_TOO_LARGE",
+          });
+        }
+
+        // Duplicate Member Check
+        for (const member of incomingMembers) {
+          if (existingRegisterNumbers.has(member.registerNumber)) {
+            return res.status(409).json({
+              error: `Participant ${member.name} (${member.registerNumber}) is already registered for this event`,
+              code: "ALREADY_REGISTERED",
+            });
+          }
+          if (member.email && existingEmails.has(member.email.toLowerCase())) {
+            return res.status(409).json({
+              error: `Participant email ${member.email} is already registered for this event`,
+              code: "ALREADY_REGISTERED",
+            });
+          }
+        }
+
+        // Check Outsiders
+        const hasOutsider = incomingMembers.some(m => m.registerNumber.startsWith("VIS"));
+        const participantOrganization = hasOutsider ? "outsider" : "christ_member";
+        if (hasOutsider && !asBoolean(event.allow_outsiders)) {
+          return res.status(403).json({
+            error: "This event does not allow outsider registrations",
+            details: "Only Christ University members can register for this event",
+          });
+        }
+
+        // Check Event Capacity
+        if (event.max_participants) {
+          const currentTotal = (existingRegistrations || []).reduce(
+            (count, registration) => count + countParticipantsInRegistration(registration),
+            0
+          );
+          if (currentTotal + totalIncomingCount > event.max_participants) {
+            return res.status(400).json({
+              error: "Event registration capacity exceeded",
+              details: `This event can accept maximum ${event.max_participants} participants. Currently ${currentTotal} are registered.`,
+              code: "CAPACITY_FULL",
+              availableSpots: Math.max(0, event.max_participants - currentTotal),
+            });
+          }
+        }
+
+        const registration_id = uuidv4().replace(/-/g, "");
+        const qrEmail = leaderEmail || `${normalizedLeaderReg.toLowerCase()}@onspot.socio`;
+        const qrCodeData = generateQRCodeData(registration_id, eventId, qrEmail);
+        if (participantOrganization === "christ_member") {
+          qrCodeData.simple_qr = `${normalizedLeaderReg}/${eventId}`;
+        }
+
+        const [registration] = await insert("registrations", {
+          registration_id,
+          event_id: eventId,
+          user_email: leaderEmail,
+          registration_type: "team",
+          team_name: rawTeamName,
+          register_id: rawTeamName,
+          team_leader_name: leaderName,
+          team_leader_email: leaderEmail,
+          team_leader_register_number: normalizedLeaderReg,
+          individual_name: leaderName,
+          individual_email: leaderEmail,
+          individual_register_number: normalizedLeaderReg,
+          teammates: normalizedTeammates,
+          participant_organization: participantOrganization,
+          qr_code_data: qrCodeData,
+          qr_code_generated_at: new Date().toISOString(),
+          custom_field_responses: req.body.custom_field_responses || null,
+        });
+
+        const newTotalParticipants = Math.max(0, (event.total_participants || 0) + totalIncomingCount);
+        await update("events", { total_participants: newTotalParticipants }, { event_id: eventId });
+
+        // Provision teammate users in background out of band
+        createOrUpdateTeammateUsers(
+          incomingMembers.map(m => ({ name: m.name, email: m.email, registerNumber: m.registerNumber })),
+          participantOrganization
+        ).catch(err => console.error("Error provisioning on-spot teammate users:", err));
+
+        return res.status(201).json({
+          message: "On-spot team registration added successfully",
+          registration: {
+            ...registration,
+            teammates: normalizedTeammates,
+          },
+        });
+      } else {
+        // --- INDIVIDUAL ON-SPOT REGISTRATION ---
+        const attendeeName = String(req.body?.name || "").trim();
+        const registerNumberRaw = String(req.body?.register_number || req.body?.registerNumber || "").trim();
+        const visitorIdRaw = String(req.body?.visitor_id || req.body?.visitorId || "").trim();
+        const attendeeEmail = String(req.body?.email || "").trim() || null;
+
+        if (!attendeeName) {
+          return res.status(400).json({ error: "Name is required" });
+        }
+
+        const registerIdentifier = registerNumberRaw || visitorIdRaw;
+        if (!registerIdentifier) {
+          return res.status(400).json({
+            error: "Register number or visitor ID is required",
+            code: "REGISTER_ID_REQUIRED",
+          });
+        }
+
+        const normalizedIdentifier = normalizeRegisterIdentifier(registerIdentifier);
+        const participantOrganization = normalizedIdentifier.startsWith("VIS") ? "outsider" : "christ_member";
+
+        if (participantOrganization === "outsider") {
+          const allowsOutsiders = asBoolean(event.allow_outsiders);
+          if (!allowsOutsiders) {
+            return res.status(403).json({
+              error: "This event does not allow outsider registrations",
+              details: "Only Christ University members can register for this event",
+            });
+          }
+        }
+
+        if (existingRegisterNumbers.has(normalizedIdentifier)) {
+          return res.status(409).json({
+            error: "Participant is already registered for this event",
+            code: "ALREADY_REGISTERED",
+          });
+        }
+
+        if (event.max_participants) {
+          const totalParticipants = (existingRegistrations || []).reduce(
+            (count, registration) => count + countParticipantsInRegistration(registration),
+            0
+          );
+
+          if (totalParticipants + 1 > event.max_participants) {
+            return res.status(400).json({
+              error: "Event registration capacity exceeded",
+              details: `This event can accept maximum ${event.max_participants} participants. Currently ${totalParticipants} are registered.`,
+              code: "CAPACITY_FULL",
+              availableSpots: Math.max(0, event.max_participants - totalParticipants),
+            });
+          }
+        }
+
+        if (participantOrganization === "outsider" && event.outsider_max_participants) {
+          const outsiderCount = (existingRegistrations || []).reduce((count, registration) => {
+            if (registration?.participant_organization !== "outsider") return count;
+            return count + countParticipantsInRegistration(registration);
+          }, 0);
+
+          if (outsiderCount + 1 > event.outsider_max_participants) {
+            return res.status(400).json({
+              error: "Outsider registration quota reached",
+              details: `This event can accept maximum ${event.outsider_max_participants} outsider participants. Currently ${outsiderCount} are registered.`,
+              code: "OUTSIDER_QUOTA_FULL",
+              availableSpots: Math.max(0, event.outsider_max_participants - outsiderCount),
+            });
+          }
+        }
+
+        const registration_id = uuidv4().replace(/-/g, "");
+        const qrEmail = attendeeEmail || `${normalizedIdentifier.toLowerCase()}@onspot.socio`;
+        const qrCodeData = generateQRCodeData(registration_id, eventId, qrEmail);
+        if (participantOrganization === "christ_member") {
+          qrCodeData.simple_qr = `${normalizedIdentifier}/${eventId}`;
+        }
+
+        const [registration] = await insert("registrations", {
+          registration_id,
+          event_id: eventId,
+          user_email: attendeeEmail,
+          registration_type: "individual",
+          individual_name: attendeeName,
+          individual_email: attendeeEmail,
+          individual_register_number: normalizedIdentifier,
+          register_id: normalizedIdentifier,
+          team_name: null,
+          team_leader_name: attendeeName,
+          team_leader_email: attendeeEmail,
+          team_leader_register_number: normalizedIdentifier,
+          teammates: [],
+          participant_organization: participantOrganization,
+          qr_code_data: qrCodeData,
+          qr_code_generated_at: new Date().toISOString(),
+          custom_field_responses: null,
+        });
+
+        const newTotalParticipants = Math.max(0, (event.total_participants || 0) + 1);
+        await update("events", { total_participants: newTotalParticipants }, { event_id: eventId });
+
+        return res.status(201).json({
+          message: "On-spot registration added successfully",
+          registration: {
+            ...registration,
+            teammates: [],
+          },
         });
       }
-
-      if (event.max_participants) {
-        const totalParticipants = (existingRegistrations || []).reduce(
-          (count, registration) => count + countParticipantsInRegistration(registration),
-          0
-        );
-
-        if (totalParticipants + 1 > event.max_participants) {
-          return res.status(400).json({
-            error: "Event registration capacity exceeded",
-            details: `This event can accept maximum ${event.max_participants} participants. Currently ${totalParticipants} are registered.`,
-            code: "CAPACITY_FULL",
-            availableSpots: Math.max(0, event.max_participants - totalParticipants),
-          });
-        }
-      }
-
-      if (participantOrganization === "outsider" && event.outsider_max_participants) {
-        const outsiderCount = (existingRegistrations || []).reduce((count, registration) => {
-          if (registration?.participant_organization !== "outsider") return count;
-          return count + countParticipantsInRegistration(registration);
-        }, 0);
-
-        if (outsiderCount + 1 > event.outsider_max_participants) {
-          return res.status(400).json({
-            error: "Outsider registration quota reached",
-            details: `This event can accept maximum ${event.outsider_max_participants} outsider participants. Currently ${outsiderCount} are registered.`,
-            code: "OUTSIDER_QUOTA_FULL",
-            availableSpots: Math.max(0, event.outsider_max_participants - outsiderCount),
-          });
-        }
-      }
-
-      const registration_id = uuidv4().replace(/-/g, "");
-      const qrEmail = attendeeEmail || `${normalizedIdentifier.toLowerCase()}@onspot.socio`;
-      const qrCodeData = generateQRCodeData(registration_id, eventId, qrEmail);
-      if (participantOrganization === "christ_member") {
-        qrCodeData.simple_qr = `${normalizedIdentifier}/${eventId}`;
-      }
-
-      const [registration] = await insert("registrations", {
-        registration_id,
-        event_id: eventId,
-        user_email: attendeeEmail,
-        registration_type: "individual",
-        individual_name: attendeeName,
-        individual_email: attendeeEmail,
-        individual_register_number: normalizedIdentifier,
-        team_name: null,
-        team_leader_name: attendeeName,
-        team_leader_email: attendeeEmail,
-        team_leader_register_number: normalizedIdentifier,
-        teammates: [],
-        participant_organization: participantOrganization,
-        qr_code_data: qrCodeData,
-        qr_code_generated_at: new Date().toISOString(),
-        custom_field_responses: null,
-      });
-
-      const newTotalParticipants = Math.max(0, (event.total_participants || 0) + 1);
-      await update("events", { total_participants: newTotalParticipants }, { event_id: eventId });
-
-      return res.status(201).json({
-        message: "On-spot registration added successfully",
-        registration: {
-          ...registration,
-          teammates: [],
-        },
-      });
     } catch (error) {
       console.error("Error creating on-spot registration:", error);
       return res.status(500).json({

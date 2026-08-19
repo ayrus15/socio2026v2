@@ -321,7 +321,7 @@ export const eventFormSchema = z
     detailedDescription: z
       .string()
       .min(1, "Description is required")
-      .max(1000, "Max 1000 chars"),
+      .max(2000, "Max 2000 chars"),
     department: z
       .array(z.string())
       .min(1, "At least one department is required"),

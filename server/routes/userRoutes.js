@@ -10,6 +10,7 @@ import {
 } from "../middleware/authMiddleware.js";
 import { sendWelcomeEmail } from "../utils/emailService.js";
 import { getFestTableForDatabase } from "../utils/festTableResolver.js";
+import { cacheGet, cacheSet } from "../services/cacheService.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -17,6 +18,56 @@ const supabase = createClient(
 );
 
 const router = express.Router();
+
+// Fast participant lookup by register_number, visitor_id, or email (cached for high traffic)
+router.get("/lookup", authenticateUser, async (req, res) => {
+  try {
+    const rawIdentifier = String(req.query.identifier || req.query.query || req.query.register_number || "").trim();
+    if (!rawIdentifier) {
+      return res.status(400).json({ error: "Identifier parameter is required" });
+    }
+
+    const normalizedIdentifier = rawIdentifier.toUpperCase();
+    const cacheKey = `user:lookup:${normalizedIdentifier}`;
+
+    const cachedUser = await cacheGet(cacheKey);
+    if (cachedUser) {
+      return res.status(200).json({ found: true, user: cachedUser, cached: true });
+    }
+
+    // Try finding by register_number
+    let user = await queryOne("users", { where: { register_number: rawIdentifier } });
+    if (!user) {
+      // Try finding by visitor_id
+      user = await queryOne("users", { where: { visitor_id: rawIdentifier } });
+    }
+    if (!user) {
+      // Try finding by email
+      user = await queryOne("users", { where: { email: rawIdentifier.toLowerCase() } });
+    }
+
+    if (!user) {
+      return res.status(200).json({ found: false });
+    }
+
+    const resultUser = {
+      name: user.name || "",
+      email: user.email || "",
+      register_number: user.register_number || user.visitor_id || rawIdentifier,
+      visitor_id: user.visitor_id || null,
+      course: user.course || "",
+      department: user.department || "",
+      organization_type: user.organization_type || "christ_member",
+    };
+
+    await cacheSet(cacheKey, resultUser, 900); // 15 mins cache TTL
+
+    return res.status(200).json({ found: true, user: resultUser, cached: false });
+  } catch (error) {
+    console.error("Error looking up user:", error);
+    return res.status(500).json({ error: "Failed to lookup user details" });
+  }
+});
 
 // Get all users with optional search and role filter (master admin only)
 router.get(

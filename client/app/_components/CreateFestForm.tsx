@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
@@ -1377,8 +1377,8 @@ function CreateFestForm(props?: CreateFestProps) {
           case "detailedDescription":
             if (!(value as string).trim())
               newErrors.detailedDescription = "Description is required";
-            else if ((value as string).length > 1000)
-              newErrors.detailedDescription = "Max 1000 characters";
+            else if ((value as string).length > 2000)
+              newErrors.detailedDescription = "Max 2000 characters";
             else delete newErrors.detailedDescription;
             break;
           case "department":
@@ -1577,7 +1577,7 @@ function CreateFestForm(props?: CreateFestProps) {
           }
           case "detailedDescription":
             if (!String(value).trim()) errorMsg = "Description is required";
-            else if (String(value).length > 1000) errorMsg = "Max 1000 characters";
+            else if (String(value).length > 2000) errorMsg = "Max 2000 characters";
             break;
           case "department":
             if (!Array.isArray(value) || value.length === 0) {

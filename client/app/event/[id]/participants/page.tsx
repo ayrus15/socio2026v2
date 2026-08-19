@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useAuth } from "@/context/AuthContext";
 import Container from "@/components/Container";
+import { User, Users, Plus, Trash2, Sparkles, CheckCircle2 } from "lucide-react";
 import {
   addThemedChartsSheet,
   addStructuredTableSheet,
@@ -49,9 +50,23 @@ export default function StudentsPage() {
   const [eventOnSpotEnabled, setEventOnSpotEnabled] = useState(false);
   const [eventCreatedBy, setEventCreatedBy] = useState<string[]>([]);
   const [showOnSpotForm, setShowOnSpotForm] = useState(false);
+
+  // On-spot Mode and Fields
+  const [onSpotRegistrationType, setOnSpotRegistrationType] = useState<"individual" | "team">("individual");
   const [onSpotName, setOnSpotName] = useState("");
   const [onSpotRegisterId, setOnSpotRegisterId] = useState("");
   const [onSpotEmail, setOnSpotEmail] = useState("");
+
+  // Team Mode Fields
+  const [onSpotTeamName, setOnSpotTeamName] = useState("");
+  const [onSpotLeaderName, setOnSpotLeaderName] = useState("");
+  const [onSpotLeaderRegisterId, setOnSpotLeaderRegisterId] = useState("");
+  const [onSpotLeaderEmail, setOnSpotLeaderEmail] = useState("");
+  const [onSpotTeammates, setOnSpotTeammates] = useState<Array<{ id: string; name: string; registerId: string; email: string }>>([]);
+
+  const lookupCacheRef = useRef<Map<string, { name: string; email: string; course?: string; department?: string }>>(new Map());
+  const [autoFillStatuses, setAutoFillStatuses] = useState<Record<string, string>>({});
+
   const [onSpotError, setOnSpotError] = useState<string | null>(null);
   const [onSpotSuccess, setOnSpotSuccess] = useState<string | null>(null);
   const [isOnSpotSubmitting, setIsOnSpotSubmitting] = useState(false);
@@ -178,6 +193,61 @@ export default function StudentsPage() {
     if (event_id) fetchData();
   }, [event_id, apiBaseUrl, refreshNonce]);
 
+  const lookupParticipant = async (
+    identifier: string,
+    targetFieldId: string,
+    onFound: (data: { name: string; email: string }) => void
+  ) => {
+    const trimmedId = identifier.trim();
+    if (!trimmedId || trimmedId.length < 3) return;
+
+    const normalizedKey = trimmedId.toUpperCase();
+
+    // 1. Check client LRU cache first (0 network calls)
+    if (lookupCacheRef.current.has(normalizedKey)) {
+      const cached = lookupCacheRef.current.get(normalizedKey)!;
+      onFound({ name: cached.name, email: cached.email });
+      setAutoFillStatuses((prev) => ({
+        ...prev,
+        [targetFieldId]: `✨ Loaded from profile: ${cached.name}${cached.email ? ` (${cached.email})` : ''}`,
+      }));
+      return;
+    }
+
+    if (!session?.access_token) return;
+
+    try {
+      setAutoFillStatuses((prev) => ({ ...prev, [targetFieldId]: "Fetching profile..." }));
+      const res = await fetch(`${apiBaseUrl}/api/users/lookup?identifier=${encodeURIComponent(trimmedId)}`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.found && data.user) {
+          const fetchedUser = {
+            name: data.user.name || "",
+            email: data.user.email || "",
+            course: data.user.course,
+            department: data.user.department,
+          };
+          lookupCacheRef.current.set(normalizedKey, fetchedUser);
+          onFound({ name: fetchedUser.name, email: fetchedUser.email });
+          setAutoFillStatuses((prev) => ({
+            ...prev,
+            [targetFieldId]: `✨ Auto-filled: ${fetchedUser.name}${fetchedUser.email ? ` (${fetchedUser.email})` : ''}`,
+          }));
+          return;
+        }
+      }
+      setAutoFillStatuses((prev) => ({ ...prev, [targetFieldId]: "" }));
+    } catch (_err) {
+      setAutoFillStatuses((prev) => ({ ...prev, [targetFieldId]: "" }));
+    }
+  };
+
   const handleOnSpotRegistration = async () => {
     setOnSpotError(null);
     setOnSpotSuccess(null);
@@ -187,33 +257,82 @@ export default function StudentsPage() {
       return;
     }
 
-    const attendeeName = onSpotName.trim();
-    const registerIdentifier = onSpotRegisterId.trim();
-    const attendeeEmail = onSpotEmail.trim();
-
-    if (!attendeeName) {
-      setOnSpotError("Participant name is required.");
-      return;
-    }
-
-    if (!registerIdentifier) {
-      setOnSpotError("Register number or visitor ID is required.");
-      return;
-    }
-
     setIsOnSpotSubmitting(true);
     try {
+      let bodyData: any = {};
+
+      if (onSpotRegistrationType === "individual") {
+        const attendeeName = onSpotName.trim();
+        const registerIdentifier = onSpotRegisterId.trim();
+        const attendeeEmail = onSpotEmail.trim();
+
+        if (!attendeeName) {
+          setOnSpotError("Participant name is required.");
+          setIsOnSpotSubmitting(false);
+          return;
+        }
+        if (!registerIdentifier) {
+          setOnSpotError("Register number or visitor ID is required.");
+          setIsOnSpotSubmitting(false);
+          return;
+        }
+
+        bodyData = {
+          registration_type: "individual",
+          name: attendeeName,
+          register_number: registerIdentifier,
+          email: attendeeEmail || undefined,
+        };
+      } else {
+        // Team registration
+        const teamName = onSpotTeamName.trim();
+        const leaderName = onSpotLeaderName.trim();
+        const leaderRegisterId = onSpotLeaderRegisterId.trim();
+        const leaderEmail = onSpotLeaderEmail.trim();
+
+        if (!teamName) {
+          setOnSpotError("Team name is required.");
+          setIsOnSpotSubmitting(false);
+          return;
+        }
+        if (!leaderName) {
+          setOnSpotError("Team leader name is required.");
+          setIsOnSpotSubmitting(false);
+          return;
+        }
+        if (!leaderRegisterId) {
+          setOnSpotError("Team leader register number or visitor ID is required.");
+          setIsOnSpotSubmitting(false);
+          return;
+        }
+
+        const validTeammates = onSpotTeammates
+          .map((tm) => ({
+            name: tm.name.trim(),
+            register_number: tm.registerId.trim(),
+            email: tm.email.trim() || undefined,
+          }))
+          .filter((tm) => tm.name && tm.register_number);
+
+        bodyData = {
+          registration_type: "team",
+          team_name: teamName,
+          team_leader: {
+            name: leaderName,
+            register_number: leaderRegisterId,
+            email: leaderEmail || undefined,
+          },
+          teammates: validTeammates,
+        };
+      }
+
       const response = await fetch(`${apiBaseUrl}/api/events/${event_id}/on-spot-register`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({
-          name: attendeeName,
-          register_number: registerIdentifier,
-          email: attendeeEmail || undefined,
-        }),
+        body: JSON.stringify(bodyData),
       });
 
       const payload = await response.json().catch(() => null);
@@ -221,13 +340,23 @@ export default function StudentsPage() {
         throw new Error(payload?.error || `Failed with status ${response.status}`);
       }
 
-      setOnSpotSuccess("On-spot participant added successfully.");
+      setOnSpotSuccess(
+        onSpotRegistrationType === "team"
+          ? "On-spot team registration added successfully!"
+          : "On-spot participant added successfully."
+      );
       setOnSpotName("");
       setOnSpotRegisterId("");
       setOnSpotEmail("");
+      setOnSpotTeamName("");
+      setOnSpotLeaderName("");
+      setOnSpotLeaderRegisterId("");
+      setOnSpotLeaderEmail("");
+      setOnSpotTeammates([]);
+      setAutoFillStatuses({});
       setRefreshNonce((prev) => prev + 1);
     } catch (submitError: any) {
-      setOnSpotError(submitError?.message || "Unable to add on-spot participant.");
+      setOnSpotError(submitError?.message || "Unable to complete on-spot registration.");
     } finally {
       setIsOnSpotSubmitting(false);
     }
@@ -435,43 +564,348 @@ export default function StudentsPage() {
         </div>
 
         {showOnSpotForm && canUseOnSpot && (
-          <div className="mb-6 border border-blue-200 bg-blue-50 rounded-xl p-4">
-            <h2 className="text-sm font-semibold text-[#063168] mb-3">Add On-Spot Participant</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <input
-                type="text"
-                value={onSpotName}
-                onChange={(e) => setOnSpotName(e.target.value)}
-                placeholder="Participant name *"
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
-              />
-              <input
-                type="text"
-                value={onSpotRegisterId}
-                onChange={(e) => setOnSpotRegisterId(e.target.value)}
-                placeholder="Register no. or Visitor ID (VIS...) *"
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
-              />
-              <input
-                type="email"
-                value={onSpotEmail}
-                onChange={(e) => setOnSpotEmail(e.target.value)}
-                placeholder="Email (optional)"
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
-              />
+          <div className="mb-6 border border-blue-200 bg-blue-50/80 rounded-xl p-5 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 border-b border-blue-100 pb-3">
+              <div>
+                <h2 className="text-base font-bold text-[#063168]">On-Spot Registration Desk</h2>
+                <p className="text-xs text-slate-500">
+                  Enter Register No. or Visitor ID (VID) to automatically pre-fill student and visitor details.
+                </p>
+              </div>
+
+              {/* Mode Toggle Switch */}
+              <div className="inline-flex p-1 bg-white border border-blue-200 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnSpotRegistrationType("individual");
+                    setOnSpotError(null);
+                    setOnSpotSuccess(null);
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                    onSpotRegistrationType === "individual"
+                      ? "bg-[#154CB3] text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <User className="w-3.5 h-3.5" />
+                  Individual
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnSpotRegistrationType("team");
+                    setOnSpotError(null);
+                    setOnSpotSuccess(null);
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                    onSpotRegistrationType === "team"
+                      ? "bg-[#154CB3] text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  Team Registration
+                </button>
+              </div>
             </div>
-            <p className="text-xs text-gray-600 mt-2">
-              If the attendee does not have a register number or visitor ID, ask them to log in on SOCIO and get one first.
-            </p>
-            {onSpotError && <p className="text-xs text-red-600 mt-2">{onSpotError}</p>}
-            {onSpotSuccess && <p className="text-xs text-emerald-700 mt-2">{onSpotSuccess}</p>}
-            <div className="mt-3">
+
+            {onSpotRegistrationType === "individual" ? (
+              /* INDIVIDUAL FORM */
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Register No. or Visitor ID (VID) *
+                    </label>
+                    <input
+                      type="text"
+                      value={onSpotRegisterId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setOnSpotRegisterId(val);
+                        if (val.trim().length >= 5) {
+                          lookupParticipant(val, "indiv_reg", ({ name, email }) => {
+                            if (name) setOnSpotName(name);
+                            if (email) setOnSpotEmail(email);
+                          });
+                        }
+                      }}
+                      onBlur={() => {
+                        lookupParticipant(onSpotRegisterId, "indiv_reg", ({ name, email }) => {
+                          if (name) setOnSpotName(name);
+                          if (email) setOnSpotEmail(email);
+                        });
+                      }}
+                      placeholder="e.g. 2230101 or VIS-1001"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                    />
+                    {autoFillStatuses["indiv_reg"] && (
+                      <p className="text-[11px] font-medium text-emerald-700 mt-1 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-amber-500" />
+                        {autoFillStatuses["indiv_reg"]}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Participant Name *</label>
+                    <input
+                      type="text"
+                      value={onSpotName}
+                      onChange={(e) => setOnSpotName(e.target.value)}
+                      placeholder="Participant Full Name"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Email Address</label>
+                    <input
+                      type="email"
+                      value={onSpotEmail}
+                      onChange={(e) => setOnSpotEmail(e.target.value)}
+                      placeholder="email@example.com (optional)"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* TEAM FORM */
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">Team Name (Team ID) *</label>
+                  <input
+                    type="text"
+                    value={onSpotTeamName}
+                    onChange={(e) => setOnSpotTeamName(e.target.value)}
+                    placeholder="e.g. Alpha Squad, Code Warriors..."
+                    className="w-full max-w-md rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-[#063168] focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Team Name will be used as the unique team identifier for this registration.
+                  </p>
+                </div>
+
+                {/* Team Leader Section */}
+                <div className="border border-blue-200 bg-white rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="bg-blue-100 text-[#154CB3] text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full">
+                      Team Leader
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Leader Reg No. / VID *</label>
+                      <input
+                        type="text"
+                        value={onSpotLeaderRegisterId}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setOnSpotLeaderRegisterId(val);
+                          if (val.trim().length >= 5) {
+                            lookupParticipant(val, "leader_reg", ({ name, email }) => {
+                              if (name) setOnSpotLeaderName(name);
+                              if (email) setOnSpotLeaderEmail(email);
+                            });
+                          }
+                        }}
+                        onBlur={() => {
+                          lookupParticipant(onSpotLeaderRegisterId, "leader_reg", ({ name, email }) => {
+                            if (name) setOnSpotLeaderName(name);
+                            if (email) setOnSpotLeaderEmail(email);
+                          });
+                        }}
+                        placeholder="e.g. 2230101 or VIS-1001"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                      />
+                      {autoFillStatuses["leader_reg"] && (
+                        <p className="text-[11px] font-medium text-emerald-700 mt-1 flex items-center gap-1">
+                          <Sparkles className="w-3 h-3 text-amber-500" />
+                          {autoFillStatuses["leader_reg"]}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Leader Name *</label>
+                      <input
+                        type="text"
+                        value={onSpotLeaderName}
+                        onChange={(e) => setOnSpotLeaderName(e.target.value)}
+                        placeholder="Leader Full Name"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Leader Email</label>
+                      <input
+                        type="email"
+                        value={onSpotLeaderEmail}
+                        onChange={(e) => setOnSpotLeaderEmail(e.target.value)}
+                        placeholder="email@example.com (optional)"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Teammates Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-800">
+                      Teammates ({onSpotTeammates.length})
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOnSpotTeammates((prev) => [
+                          ...prev,
+                          { id: String(Date.now() + Math.random()), name: "", registerId: "", email: "" },
+                        ]);
+                      }}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#154CB3] hover:text-[#063168] bg-white border border-blue-300 px-2.5 py-1 rounded-md shadow-xs hover:bg-blue-50 transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Teammate
+                    </button>
+                  </div>
+
+                  {onSpotTeammates.length === 0 ? (
+                    <p className="text-xs text-slate-500 italic bg-white/60 p-3 rounded-lg border border-dashed border-blue-200">
+                      No teammates added yet. Click "+ Add Teammate" to include members to this team.
+                    </p>
+                  ) : (
+                    onSpotTeammates.map((tm, index) => (
+                      <div key={tm.id} className="border border-slate-200 bg-white rounded-lg p-3 relative">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[11px] font-bold text-slate-500">Teammate #{index + 1}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOnSpotTeammates((prev) => prev.filter((t) => t.id !== tm.id));
+                            }}
+                            className="text-slate-400 hover:text-red-600 transition-colors p-1"
+                            title="Remove Teammate"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div>
+                            <input
+                              type="text"
+                              value={tm.registerId}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setOnSpotTeammates((prev) =>
+                                  prev.map((item) => (item.id === tm.id ? { ...item, registerId: val } : item))
+                                );
+                                if (val.trim().length >= 5) {
+                                  lookupParticipant(val, `tm_${tm.id}`, ({ name, email }) => {
+                                    setOnSpotTeammates((prev) =>
+                                      prev.map((item) =>
+                                        item.id === tm.id
+                                          ? {
+                                              ...item,
+                                              name: name || item.name,
+                                              email: email || item.email,
+                                            }
+                                          : item
+                                      )
+                                    );
+                                  });
+                                }
+                              }}
+                              onBlur={() => {
+                                lookupParticipant(tm.registerId, `tm_${tm.id}`, ({ name, email }) => {
+                                  setOnSpotTeammates((prev) =>
+                                    prev.map((item) =>
+                                      item.id === tm.id
+                                        ? {
+                                            ...item,
+                                            name: name || item.name,
+                                            email: email || item.email,
+                                          }
+                                        : item
+                                    )
+                                );
+                                });
+                              }}
+                              placeholder="Reg No. or Visitor ID *"
+                              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                            />
+                            {autoFillStatuses[`tm_${tm.id}`] && (
+                              <p className="text-[10px] font-medium text-emerald-700 mt-1 flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-amber-500" />
+                                {autoFillStatuses[`tm_${tm.id}`]}
+                              </p>
+                            )}
+                          </div>
+
+                          <div>
+                            <input
+                              type="text"
+                              value={tm.name}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setOnSpotTeammates((prev) =>
+                                  prev.map((item) => (item.id === tm.id ? { ...item, name: val } : item))
+                                );
+                              }}
+                              placeholder="Full Name *"
+                              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                            />
+                          </div>
+
+                          <div>
+                            <input
+                              type="email"
+                              value={tm.email}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setOnSpotTeammates((prev) =>
+                                  prev.map((item) => (item.id === tm.id ? { ...item, email: val } : item))
+                                );
+                              }}
+                              placeholder="Email (optional)"
+                              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#154CB3]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {onSpotError && (
+              <div className="mt-3 p-2.5 rounded-lg bg-red-100 border border-red-200 text-xs font-semibold text-red-700">
+                {onSpotError}
+              </div>
+            )}
+            {onSpotSuccess && (
+              <div className="mt-3 p-2.5 rounded-lg bg-emerald-100 border border-emerald-200 text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                {onSpotSuccess}
+              </div>
+            )}
+
+            <div className="mt-4 flex items-center justify-end border-t border-blue-100 pt-3">
               <button
                 onClick={handleOnSpotRegistration}
                 disabled={isOnSpotSubmitting}
-                className="bg-[#154CB3] text-white text-sm px-4 py-2 rounded-lg font-medium hover:bg-[#063168] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="bg-[#154CB3] text-white text-sm px-5 py-2.5 rounded-lg font-semibold hover:bg-[#063168] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-xs"
               >
-                {isOnSpotSubmitting ? "Adding..." : "Add Participant"}
+                {isOnSpotSubmitting
+                  ? "Processing..."
+                  : onSpotRegistrationType === "team"
+                  ? "Add Team Registration"
+                  : "Add Participant"}
               </button>
             </div>
           </div>
