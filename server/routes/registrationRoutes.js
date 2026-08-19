@@ -199,6 +199,30 @@ router.get(
       
       // Sort by created_at descending
       registrations.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      // Asynchronously link user_email for matching register_number records if user_email is missing/null
+      if (isValidEmail && isValidRegId) {
+        (async () => {
+          try {
+            const unlinkedIds = registrations
+              .filter(r => (!r.user_email || r.user_email === "null") && (
+                String(r.individual_register_number || "").toUpperCase() === regId.toUpperCase() ||
+                String(r.team_leader_register_number || "").toUpperCase() === regId.toUpperCase()
+              ))
+              .map(r => r.registration_id);
+
+            if (unlinkedIds.length > 0) {
+              await supabase
+                .from("registrations")
+                .update({ user_email: emailId })
+                .in("registration_id", unlinkedIds);
+              console.log(`Auto-linked ${unlinkedIds.length} registration(s) to ${emailId} for register #${regId}`);
+            }
+          } catch (autoLinkErr) {
+            console.warn("Auto-link registration email error:", autoLinkErr.message);
+          }
+        })();
+      }
       
     } else if (!event_id) {
       registrations = await queryAll("registrations", {

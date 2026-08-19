@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useAuth } from "@/context/AuthContext";
 import Container from "@/components/Container";
-import { User, Users, Plus, Trash2, Sparkles, CheckCircle2 } from "lucide-react";
+import { User, Users, Plus, Trash2, CheckCircle2 } from "lucide-react";
 import {
   addThemedChartsSheet,
   addStructuredTableSheet,
@@ -247,7 +247,7 @@ export default function StudentsPage() {
       onFound({ name: cached.name, email: cached.email });
       setAutoFillStatuses((prev) => ({
         ...prev,
-        [targetFieldId]: `✨ Loaded from profile: ${cached.name}${cached.email ? ` (${cached.email})` : ''}`,
+        [targetFieldId]: `Fetching details: ${cached.name}${cached.email ? ` (${cached.email})` : ''}`,
       }));
       return;
     }
@@ -255,7 +255,7 @@ export default function StudentsPage() {
     if (!session?.access_token) return;
 
     try {
-      setAutoFillStatuses((prev) => ({ ...prev, [targetFieldId]: "Fetching profile..." }));
+      setAutoFillStatuses((prev) => ({ ...prev, [targetFieldId]: "Fetching details..." }));
       const res = await fetch(`${apiBaseUrl}/api/users/lookup?identifier=${encodeURIComponent(trimmedId)}`, {
         headers: {
           Authorization: `Bearer ${session.access_token}`,
@@ -275,7 +275,7 @@ export default function StudentsPage() {
           onFound({ name: fetchedUser.name, email: fetchedUser.email });
           setAutoFillStatuses((prev) => ({
             ...prev,
-            [targetFieldId]: `✨ Auto-filled: ${fetchedUser.name}${fetchedUser.email ? ` (${fetchedUser.email})` : ''}`,
+            [targetFieldId]: `Fetching details: ${fetchedUser.name}${fetchedUser.email ? ` (${fetchedUser.email})` : ''}`,
           }));
           return;
         }
@@ -715,7 +715,6 @@ export default function StudentsPage() {
                       />
                       {autoFillStatuses["indiv_reg"] && (
                         <p className="text-[11px] font-medium text-emerald-700 mt-1 flex items-center gap-1">
-                          <Sparkles className="w-3 h-3 text-amber-500" />
                           {autoFillStatuses["indiv_reg"]}
                         </p>
                       )}
@@ -808,7 +807,6 @@ export default function StudentsPage() {
                         />
                         {autoFillStatuses["leader_reg"] && (
                           <p className="text-[11px] font-medium text-emerald-700 mt-1 flex items-center gap-1">
-                            <Sparkles className="w-3 h-3 text-amber-500" />
                             {autoFillStatuses["leader_reg"]}
                           </p>
                         )}
@@ -946,7 +944,6 @@ export default function StudentsPage() {
                                 />
                                 {autoFillStatuses[`tm_${tm.id}`] && (
                                   <p className="text-[10px] font-medium text-emerald-700 mt-1 flex items-center gap-1">
-                                    <Sparkles className="w-3 h-3 text-amber-500" />
                                     {autoFillStatuses[`tm_${tm.id}`]}
                                   </p>
                                 )}
