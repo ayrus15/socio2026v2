@@ -124,21 +124,23 @@ export default function StudentsPage() {
           );
 
           const rawRegType = String(event.registration_type || "both").toLowerCase() as "individual" | "team" | "both";
-          const parsedMin = Number(event.min_participants || (rawRegType === "team" ? 2 : 1));
-          const parsedMax = Number(event.participants_per_team || event.max_team_size || (rawRegType === "team" ? 10 : 1));
+          const isTeamReg = rawRegType === "team" || Number(event.participants_per_team || event.max_team_size || 1) > 1 || Number(event.min_participants || 1) > 1;
+          const parsedMin = isTeamReg ? Math.max(2, Number(event.min_participants || 2)) : Number(event.min_participants || 1);
+          const parsedMax = Math.max(parsedMin, Number(event.participants_per_team || event.max_team_size || (isTeamReg ? 4 : 1)));
 
           setEventRegType(rawRegType);
           setEventMinParticipants(parsedMin);
           setEventMaxParticipants(parsedMax);
 
-          const isIndivOnly = rawRegType === "individual" || (parsedMax <= 1 && parsedMin <= 1);
+          const isIndivOnly = rawRegType === "individual" || (!isTeamReg && parsedMax <= 1);
           const isTeamOnly = rawRegType === "team" || parsedMin > 1;
 
           if (isIndivOnly) {
             setOnSpotRegistrationType("individual");
-          } else if (isTeamOnly) {
-            setOnSpotRegistrationType("team");
-            const requiredTeammates = Math.max(0, parsedMin - 1);
+          } else {
+            // For team or both modes, ensure required teammate slots exist if team mode active
+            const requiredTeammates = Math.max(1, parsedMin - 1);
+            if (isTeamOnly) setOnSpotRegistrationType("team");
             setOnSpotTeammates((prev) => {
               if (prev.length >= requiredTeammates) return prev;
               const needed = requiredTeammates - prev.length;
@@ -340,6 +342,16 @@ export default function StudentsPage() {
           setOnSpotError("Team leader register number or visitor ID is required.");
           setIsOnSpotSubmitting(false);
           return;
+        }
+
+        const requiredTeammatesCount = Math.max(1, eventMinParticipants - 1);
+        for (let i = 0; i < requiredTeammatesCount; i++) {
+          const tm = onSpotTeammates[i];
+          if (!tm || !tm.name.trim() || !tm.registerId.trim()) {
+            setOnSpotError(`Teammate #${i + 1} details (Reg No. / VID and Name) are required to meet minimum team size of ${eventMinParticipants}.`);
+            setIsOnSpotSubmitting(false);
+            return;
+          }
         }
 
         const validTeammates = onSpotTeammates
@@ -765,8 +777,8 @@ export default function StudentsPage() {
                   {/* Team Leader Section */}
                   <div className="border border-blue-200 bg-white rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="bg-blue-100 text-[#154CB3] text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full">
-                        Team Leader (Member #1 - Required)
+                      <span className="bg-blue-600 text-white text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full">
+                        Team Leader (Member #1 - Required 1 of {eventMinParticipants})
                       </span>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -856,6 +868,7 @@ export default function StudentsPage() {
                       </p>
                     ) : (
                       onSpotTeammates.map((tm, index) => {
+                        const memberNum = index + 2;
                         const isRequiredSlot = index < requiredTeammatesCount;
                         return (
                           <div key={tm.id} className="border border-slate-200 bg-white rounded-lg p-3 relative">
@@ -863,12 +876,12 @@ export default function StudentsPage() {
                               <div className="flex items-center gap-2">
                                 <span className="text-[11px] font-bold text-slate-700">Teammate #{index + 1}</span>
                                 {isRequiredSlot ? (
-                                  <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full">
-                                    Required
+                                  <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full">
+                                    Required (Member #{memberNum} of {eventMinParticipants})
                                   </span>
                                 ) : (
-                                  <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-semibold px-2 py-0.5 rounded-full">
-                                    Optional
+                                  <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-semibold px-2.5 py-0.5 rounded-full">
+                                    Optional (Member #{memberNum} of max {eventMaxParticipants})
                                   </span>
                                 )}
                               </div>

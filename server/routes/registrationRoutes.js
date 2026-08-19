@@ -1024,8 +1024,8 @@ router.post(
         const totalIncomingCount = incomingMembers.length;
 
         // Team Size Validation
-        const minPerTeam = event.min_participants || 2;
-        const maxPerTeam = event.participants_per_team || 10;
+        const minPerTeam = Math.max(2, Number(event.min_participants || 2));
+        const maxPerTeam = Math.max(minPerTeam, Number(event.participants_per_team || event.max_team_size || 10));
         if (totalIncomingCount < minPerTeam) {
           return res.status(400).json({
             error: "Team size too small",
