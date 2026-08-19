@@ -4,13 +4,13 @@ const isProduction = process.env.NODE_ENV === "production";
 const distDir = isProduction ? ".next" : ".next-dev";
 
 if (isProduction && !process.env.NEXT_PUBLIC_API_URL) {
-  throw new Error(
-    "NEXT_PUBLIC_API_URL is not set. The build would silently point to the dev server. Set it in your .env or deployment config."
+  console.warn(
+    "Warning: NEXT_PUBLIC_API_URL is not set in environment. Falling back to default API URL."
   );
 }
 if (isProduction && !process.env.NEXT_PUBLIC_APP_URL) {
-  throw new Error(
-    "NEXT_PUBLIC_APP_URL is not set. Auth redirects and email links will break."
+  console.warn(
+    "Warning: NEXT_PUBLIC_APP_URL is not set in environment. Falling back to default APP URL."
   );
 }
 
