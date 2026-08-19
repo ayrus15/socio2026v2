@@ -14,13 +14,7 @@ import {
   downloadWorkbook,
   type ThemedSheetColumn,
 } from "@/lib/xlsxTheme";
-
-interface CustomField {
-  id: string;
-  label: string;
-  type: string;
-  required?: boolean;
-}
+import { CustomFieldRenderer, validateCustomFields, type CustomField } from "@/app/_components/UI/CustomFieldRenderer";
 
 interface Student {
   id: number;
@@ -68,6 +62,9 @@ export default function StudentsPage() {
   const [onSpotLeaderRegisterId, setOnSpotLeaderRegisterId] = useState("");
   const [onSpotLeaderEmail, setOnSpotLeaderEmail] = useState("");
   const [onSpotTeammates, setOnSpotTeammates] = useState<Array<{ id: string; name: string; registerId: string; email: string }>>([]);
+
+  const [customFieldResponses, setCustomFieldResponses] = useState<Record<string, string | number>>({});
+  const [customFieldErrors, setCustomFieldErrors] = useState<Record<string, string>>({});
 
   const lookupCacheRef = useRef<Map<string, { name: string; email: string; course?: string; department?: string }>>(new Map());
   const [autoFillStatuses, setAutoFillStatuses] = useState<Record<string, string>>({});
@@ -374,6 +371,18 @@ export default function StudentsPage() {
         };
       }
 
+      if (customFields && customFields.length > 0) {
+        const customValidation = validateCustomFields(customFields, customFieldResponses);
+        if (!customValidation.isValid) {
+          setCustomFieldErrors(customValidation.errors);
+          setOnSpotError("Please complete all required event questions / custom fields.");
+          setIsOnSpotSubmitting(false);
+          return;
+        }
+        setCustomFieldErrors({});
+        bodyData.custom_field_responses = customFieldResponses;
+      }
+
       const response = await fetch(`${apiBaseUrl}/api/events/${event_id}/on-spot-register`, {
         method: "POST",
         headers: {
@@ -401,6 +410,8 @@ export default function StudentsPage() {
       setOnSpotLeaderRegisterId("");
       setOnSpotLeaderEmail("");
       setOnSpotTeammates([]);
+      setCustomFieldResponses({});
+      setCustomFieldErrors({});
       setAutoFillStatuses({});
       setRefreshNonce((prev) => prev + 1);
     } catch (submitError: any) {
@@ -984,6 +995,29 @@ export default function StudentsPage() {
                       })
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Event Custom Fields Section */}
+              {customFields && customFields.length > 0 && (
+                <div className="mt-4 border border-blue-200 bg-white rounded-lg p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                    <h3 className="text-xs font-bold text-[#063168]">Event Questions / Custom Fields</h3>
+                    <span className="text-[10px] font-bold bg-amber-50 text-amber-700 px-2.5 py-0.5 rounded-full border border-amber-200">
+                      {customFields.length} {customFields.length === 1 ? 'Field' : 'Fields'}
+                    </span>
+                  </div>
+                  <CustomFieldRenderer
+                    fields={customFields}
+                    values={customFieldResponses}
+                    onChange={(fieldId, value) => {
+                      setCustomFieldResponses((prev) => ({ ...prev, [fieldId]: value }));
+                      if (customFieldErrors[fieldId]) {
+                        setCustomFieldErrors((prev) => ({ ...prev, [fieldId]: "" }));
+                      }
+                    }}
+                    errors={customFieldErrors}
+                  />
                 </div>
               )}
 

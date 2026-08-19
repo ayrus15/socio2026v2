@@ -1247,7 +1247,7 @@ router.post(
           participant_organization: participantOrganization,
           qr_code_data: qrCodeData,
           qr_code_generated_at: new Date().toISOString(),
-          custom_field_responses: null,
+          custom_field_responses: req.body.custom_field_responses || null,
         });
 
         const newTotalParticipants = Math.max(0, (event.total_participants || 0) + 1);
